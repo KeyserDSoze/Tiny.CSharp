@@ -1,67 +1,100 @@
-# Tiny.CSharp
+# Tiny.CSharp Compiler
 
-**Write less syntax. Generate real C#.**
+A proof-of-concept compiler for a minimal C#-like language that generates C# source files.
 
-Tiny.CSharp is a compact, C#-compatible source language designed to reduce the
-syntax and boilerplate required to express most C# constructs. Tiny.CSharp files
-use the `.tcs` extension and are compiled into readable `.g.cs` files, which are
-then compiled by the standard .NET toolchain.
+## Overview
 
-The long-term goal is broad C# coverage while keeping method implementations
-close to normal C# where compression would reduce clarity.
+Tiny.CSharp is a source-to-source compiler that transforms `.tcs` files (Tiny.CSharp files) into standard C# files. This allows developers to write concise class declarations that are then compiled into full C# code.
 
-## Foundation proof of concept
+## Features
 
-The first feature establishes a working compiler, CLI, MSBuild integration,
-unit tests, end-to-end tests, a sample project, CI, and structured documentation.
+- Compile `.tcs` files to `.cs` files
+- Support for public sealed class declarations with `psc` keyword
+- Property type inference and aliases (i, s, g, etc.)
+- Property access modes (get/set, get/init, get/private set)
+- Namespace inference from project structure
+- Explicit namespace and using directives
+- MSBuild integration for automatic compilation during build
 
-Tiny.CSharp input:
+## Usage
+
+### Direct Compilation
+
+```bash
+dotnet run --project src/TinyCSharp.Compiler -- compile samples/TinyCSharp.Sample/TinyCSharp.Sample.csproj
+```
+
+### MSBuild Integration
+
+The compiler integrates with .NET projects via MSBuild targets. Simply add a `.tcs` file to your project and it will be automatically compiled during the build process.
+
+## Syntax
+
+### Class Declaration
 
 ```tinycs
-psc Match => Id,Name,AnotherNumber:i,Number:i|1,Code:i|2
+psc ClassName => Property1,Property2:Type|Mode
 ```
 
-Generated C#:
+### Property Modes
 
-```csharp
-public sealed class Match
-{
-    public string Id { get; set; } = string.Empty;
-    public string Name { get; set; } = string.Empty;
-    public int AnotherNumber { get; set; }
-    public int Number { get; init; }
-    public int Code { get; private set; }
-}
+- `0` (default): `get; set;`
+- `1`: `get; init;`
+- `2`: `get; private set;`
+
+### Primitive Type Aliases
+
+| Alias | Type |
+|-------|------|
+| s | string |
+| i | int |
+| l | long |
+| b | bool |
+| d | double |
+| m | decimal |
+| f | float |
+| c | char |
+| by | byte |
+| dt | DateTime |
+| g | Guid |
+| o | object |
+
+### Namespace Directive
+
+```tinycs
+n:MyCompany.MyNamespace
+psc MyClass => Property
 ```
 
-## Build
+### Using Directive
 
-The repository requires the .NET 10 SDK.
-
-```bash
-dotnet restore Tiny.CSharp.sln
-dotnet build Tiny.CSharp.sln --configuration Release --no-restore
-dotnet test Tiny.CSharp.sln --configuration Release --no-build
+```tinycs
+u:System.Collections.Generic
+psc MyClass => Property
 ```
 
-## Compiler CLI
+## Project Structure
 
-```bash
-dotnet run --project src/TinyCSharp.Compiler -- compile path/to/project
+```
+Tiny.CSharp/
+├── src/
+│   └── TinyCSharp.Compiler/          # The compiler implementation
+├── samples/
+│   └── TinyCSharp.Sample/            # Sample project
+├── build/
+│   └── TinyCSharp.Build.targets      # MSBuild integration
+├── .github/workflows/ci.yml          # CI workflow
+└── Directory.Build.props             # Automatic MSBuild target import
 ```
 
-The command recursively compiles `.tcs` files and writes sibling `.g.cs` files.
+## Development
 
-## Documentation
+To develop the compiler:
 
-Start with the [documentation index](docs/README.md).
+1. Run `dotnet build` in the `src/TinyCSharp.Compiler` directory
+2. Test with sample files in `samples/TinyCSharp.Sample/`
+3. Run `dotnet test` in the `tests/TinyCSharp.Compiler.Tests` directory
 
-- [Foundation functional analysis](docs/features/foundation.md)
-- [Foundation language syntax](docs/language/foundation-syntax.md)
-- [Compiler pipeline and build integration](docs/architecture/compiler-pipeline.md)
+## License
 
-## Current status
-
-Tiny.CSharp is an early proof of concept. The Foundation syntax is deliberately
-small and exists to validate the architecture before expanding toward broader
-C# language coverage.
+MIT

@@ -1,6 +1,0 @@
-<Solution>
-  <Project Path="src/TinyCSharp.Compiler/TinyCSharp.Compiler.csproj" />
-  <Project Path="tests/TinyCSharp.Compiler.Tests/TinyCSharp.Compiler.Tests.csproj" />
-  <Project Path="samples/TinyCSharp.Sample.Contracts/TinyCSharp.Sample.Contracts.csproj" />
-  <Project Path="samples/TinyCSharp.Sample/TinyCSharp.Sample.csproj" />
-</Solution>
