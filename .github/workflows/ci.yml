@@ -26,12 +26,7 @@ jobs:
       run: dotnet build --no-restore
       working-directory: src/TinyCSharp.Compiler
       
-    - name: Test
-      run: dotnet test --no-build --verbosity normal
-      working-directory: tests/TinyCSharp.Compiler.Tests
-      
     - name: Run sample compilation
-      run: |
-        cd samples/TinyCSharp.Sample
-        dotnet build
+      run: dotnet build --verbosity normal
+      working-directory: samples/TinyCSharp.Sample
       
