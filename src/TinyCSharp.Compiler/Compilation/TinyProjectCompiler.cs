@@ -1,8 +1,10 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using System.Xml.Linq;
 using TinyCSharp.Compiler.Generation;
 using TinyCSharp.Compiler.Parsing;
 
@@ -19,6 +21,7 @@ public sealed class TinyProjectCompiler
         
         var results = new List<TinyFileCompilationResult>();
         var diagnostics = new List<TinyDiagnostic>();
+        var projectMetadata = ReadProjectMetadata(projectPath, diagnostics);
         
         // Get the project directory
         var projectDir = Path.GetDirectoryName(projectPath);
@@ -40,7 +43,7 @@ public sealed class TinyProjectCompiler
         {
             try
             {
-                var result = await CompileFileAsync(tcsFile, options, cancellationToken);
+                var result = await CompileFileAsync(tcsFile, projectPath, projectMetadata, options, cancellationToken);
                 results.Add(result);
                 
                 if (result.Diagnostics != null)
@@ -67,6 +70,8 @@ public sealed class TinyProjectCompiler
     
     private async Task<TinyFileCompilationResult> CompileFileAsync(
         string tcsFilePath, 
+        string projectPath,
+        TinyProjectMetadata projectMetadata,
         TinyCompilerOptions options, 
         CancellationToken cancellationToken)
     {
@@ -75,6 +80,11 @@ public sealed class TinyProjectCompiler
         // Parse the .tcs file
         var parser = new TinyParser();
         var syntaxTree = parser.Parse(content);
+        syntaxTree.SourceFilePath = tcsFilePath;
+        if (string.IsNullOrWhiteSpace(syntaxTree.Namespace))
+        {
+            syntaxTree.Namespace = InferNamespace(projectPath, projectMetadata, tcsFilePath);
+        }
         
         // Validate the syntax
         var diagnostics = new List<TinyDiagnostic>();
@@ -98,18 +108,12 @@ public sealed class TinyProjectCompiler
         try
         {
             await File.WriteAllTextAsync(tempFilePath, csContent, cancellationToken);
-            
-            // Atomically replace the target file
-            if (File.Exists(csFilePath))
-            {
-                File.Delete(csFilePath);
-            }
-            
-            File.Move(tempFilePath, csFilePath);
+
+            File.Move(tempFilePath, csFilePath, true);
             
             return new TinyFileCompilationResult(tcsFilePath, true, diagnostics);
         }
-        catch
+        catch (Exception ex)
         {
             // If anything fails, clean up temp file and return error
             if (File.Exists(tempFilePath))
@@ -117,10 +121,83 @@ public sealed class TinyProjectCompiler
                 File.Delete(tempFilePath);
             }
             
+            diagnostics.Add(new TinyDiagnostic(
+                TinyDiagnosticSeverity.Error,
+                $"The generated file '{Path.GetFileName(csFilePath)}' could not be replaced: {ex.Message}",
+                tcsFilePath,
+                1,
+                1));
+
             return new TinyFileCompilationResult(tcsFilePath, false, diagnostics);
         }
     }
+
+    private static TinyProjectMetadata ReadProjectMetadata(string projectPath, List<TinyDiagnostic> diagnostics)
+    {
+        var metadata = new TinyProjectMetadata(Path.GetFileNameWithoutExtension(projectPath), null);
+
+        try
+        {
+            var document = XDocument.Load(projectPath);
+            var rootNamespace = document.Descendants().FirstOrDefault(e => e.Name.LocalName == "RootNamespace")?.Value?.Trim();
+            var assemblyName = document.Descendants().FirstOrDefault(e => e.Name.LocalName == "AssemblyName")?.Value?.Trim();
+            metadata = new TinyProjectMetadata(string.IsNullOrWhiteSpace(assemblyName) ? Path.GetFileNameWithoutExtension(projectPath) : assemblyName, rootNamespace);
+        }
+        catch (Exception ex)
+        {
+            diagnostics.Add(new TinyDiagnostic(
+                TinyDiagnosticSeverity.Warning,
+                $"Could not read project metadata from '{projectPath}': {ex.Message}",
+                projectPath,
+                1,
+                1));
+        }
+
+        return metadata;
+    }
+
+    private static string InferNamespace(string projectPath, TinyProjectMetadata metadata, string tcsFilePath)
+    {
+        var projectDir = Path.GetDirectoryName(projectPath) ?? string.Empty;
+        var sourceDir = Path.GetDirectoryName(tcsFilePath) ?? projectDir;
+        var baseNamespace = string.IsNullOrWhiteSpace(metadata.RootNamespace)
+            ? metadata.AssemblyName
+            : metadata.RootNamespace;
+
+        var relativeDir = Path.GetRelativePath(projectDir, sourceDir);
+        if (relativeDir == ".")
+        {
+            return baseNamespace;
+        }
+
+        var segments = relativeDir
+            .Split(new[] { Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar }, StringSplitOptions.RemoveEmptyEntries)
+            .Select(NormalizeNamespaceSegment)
+            .Where(segment => !string.IsNullOrWhiteSpace(segment));
+
+        var suffix = string.Join('.', segments);
+        return string.IsNullOrWhiteSpace(suffix) ? baseNamespace : $"{baseNamespace}.{suffix}";
+    }
+
+    private static string NormalizeNamespaceSegment(string segment)
+    {
+        if (string.IsNullOrWhiteSpace(segment))
+        {
+            return string.Empty;
+        }
+
+        var chars = segment.Select(ch => char.IsLetterOrDigit(ch) || ch == '_' ? ch : '_').ToArray();
+        var normalized = new string(chars);
+        if (char.IsDigit(normalized[0]))
+        {
+            normalized = "_" + normalized;
+        }
+
+        return normalized;
+    }
 }
+
+internal sealed record TinyProjectMetadata(string AssemblyName, string? RootNamespace);
 
 public sealed record TinyCompilerOptions(
     bool Recursive = true,

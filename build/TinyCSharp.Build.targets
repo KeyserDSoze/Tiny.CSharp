@@ -5,22 +5,22 @@
   </PropertyGroup>
 
   <ItemGroup Condition="'$(TinyCSharpEnabled)' == 'true'">
-    <TinyCSharpSource Include="**/*.tcs" />
+    <TinyCSharpSource Include="**/*.tcs" Exclude="bin/**;obj/**" />
   </ItemGroup>
 
   <Target Name="TinyCSharpCompile" BeforeTargets="CoreCompile" Condition="'$(TinyCSharpEnabled)' == 'true'">
     <Exec Command="dotnet run --project &quot;$(MSBuildThisFileDirectory)..\src\TinyCSharp.Compiler\TinyCSharp.Compiler.csproj&quot; -- compile &quot;$(MSBuildProjectFullPath)&quot;" />
   </Target>
 
-  <Target Name="RemoveTcsFilesFromCompile" BeforeTargets="Compile" Condition="'$(TinyCSharpEnabled)' == 'true'">
+  <Target Name="RemoveOwnedGeneratedFiles" BeforeTargets="CoreCompile" Condition="'$(TinyCSharpEnabled)' == 'true'">
     <ItemGroup>
-      <Compile Remove="**/*.tcs" />
+      <Compile Remove="@(TinyCSharpSource->'%(RootDir)%(Directory)%(Filename).cs')" />
     </ItemGroup>
   </Target>
 
   <Target Name="IncludeGeneratedCsFiles" AfterTargets="TinyCSharpCompile" Condition="'$(TinyCSharpEnabled)' == 'true'">
     <ItemGroup>
-      <Compile Include="**/*.cs" />
+      <Compile Include="@(TinyCSharpSource->'%(RootDir)%(Directory)%(Filename).cs')" />
     </ItemGroup>
   </Target>
 </Project>

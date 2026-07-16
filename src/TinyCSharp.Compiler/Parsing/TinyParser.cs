@@ -7,9 +7,9 @@ namespace TinyCSharp.Compiler.Parsing;
 
 public sealed class TinyParser
 {
-    private string _content;
+    private string _content = string.Empty;
     private int _position;
-    private List<TinyDiagnostic> _diagnostics;
+    private List<TinyDiagnostic> _diagnostics = new();
     
     public TinySyntaxTree Parse(string content)
     {
@@ -190,7 +190,7 @@ public sealed class TinyParser
         return usingName;
     }
     
-    private TinyProperty ParseProperty()
+    private TinyProperty? ParseProperty()
     {
         if (IsEndOfContent())
             return null;
@@ -216,11 +216,15 @@ public sealed class TinyParser
             }
             
             // Check for primitive alias
-            type = GetPrimitiveType(typeIdentifier);
-            if (string.IsNullOrEmpty(type))
+            var primitiveType = GetPrimitiveType(typeIdentifier);
+            if (string.IsNullOrEmpty(primitiveType))
             {
                 // Not a primitive alias, use as-is
                 type = typeIdentifier;
+            }
+            else
+            {
+                type = primitiveType;
             }
         }
         
@@ -261,7 +265,7 @@ public sealed class TinyParser
         return new TinyProperty(propertyName, type, mode);
     }
     
-    private string GetPrimitiveType(string alias)
+    private string? GetPrimitiveType(string alias)
     {
         return alias.ToLower() switch
         {
@@ -328,6 +332,7 @@ public sealed class TinyParser
 
 public sealed class TinySyntaxTree
 {
+    public string SourceFilePath { get; set; } = "";
     public string Namespace { get; set; } = "";
     public string ClassName { get; set; } = "";
     public List<TinyProperty> Properties { get; set; } = new List<TinyProperty>();

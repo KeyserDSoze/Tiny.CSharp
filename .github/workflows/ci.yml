@@ -19,14 +19,22 @@ jobs:
         dotnet-version: '10.0.x'
         
     - name: Restore dependencies
-      run: dotnet restore
-      working-directory: src/TinyCSharp.Compiler
+      run: dotnet restore Tiny.CSharp.sln
+      working-directory: ${{ github.workspace }}
       
     - name: Build
-      run: dotnet build --no-restore
-      working-directory: src/TinyCSharp.Compiler
-      
+      run: dotnet build src/TinyCSharp.Compiler/TinyCSharp.Compiler.csproj --no-restore
+      working-directory: ${{ github.workspace }}
+
+    - name: Test unit
+      run: dotnet test tests/TinyCSharp.Compiler.Tests/TinyCSharp.Compiler.Tests.csproj --no-build --verbosity normal
+      working-directory: ${{ github.workspace }}
+
+    - name: Test integration
+      run: dotnet test tests/TinyCSharp.IntegrationTests/TinyCSharp.IntegrationTests.csproj --no-build --verbosity normal
+      working-directory: ${{ github.workspace }}
+
     - name: Run sample compilation
-      run: dotnet build --verbosity normal
-      working-directory: samples/TinyCSharp.Sample
+      run: dotnet build samples/TinyCSharp.Sample/TinyCSharp.Sample.csproj --verbosity normal
+      working-directory: ${{ github.workspace }}
       
