@@ -45,9 +45,9 @@ public sealed class TinyFormatter
     {
         var sb = new StringBuilder(property.Name);
 
-        if (!string.Equals(property.Type, "string", StringComparison.Ordinal))
+        if (!property.Type.IsDefaultString)
         {
-            sb.Append(':').Append(TinyLanguage.GetCanonicalTypeToken(property.Type));
+            sb.Append(':').Append(property.Type.ToTiny());
         }
 
         if (property.Mode != 0)
