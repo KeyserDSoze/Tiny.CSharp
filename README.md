@@ -123,6 +123,23 @@ Aliases are contextual. For example, `c` is the type-kind code when it appears
 at the end of a compact type declaration, and `char` when used as a property
 type alias.
 
+### Compositional types
+
+Primitive aliases compose recursively inside nullable types, arrays, and generics:
+
+| Tiny.CSharp | C# |
+|---|---|
+| `s?` | `string?` |
+| `g[]` | `Guid[]` |
+| `List<s>` | `List<string>` |
+| `Dictionary<s,i>` | `Dictionary<string, int>` |
+| `Dictionary<s,List<i>>` | `Dictionary<string, List<int>>` |
+| `Task<Result>` | `Task<Result>` |
+
+The grammar deliberately keeps generic container names intact for now. Short aliases
+for common framework types should only be introduced after tokenizer benchmarks
+show that they improve real LLM token usage.
+
 ### Namespace and using directives
 
 ```tinycs
@@ -198,6 +215,8 @@ currently provides. Today the project already has:
 - namespace inference plus explicit `n:`;
 - explicit `u:` directives;
 - primitive property aliases and accessor modes;
+- compositional nullable, array, and generic property types;
+- stable `TCSxxxx` diagnostic codes with parser line/column reporting;
 - compact public/internal class declarations with optional `sealed`;
 - a shared canonical `TinyDocument` model and centralized type aliases;
 - a Roslyn-based C# -> Tiny.CSharp decompiler for the supported subset;
@@ -207,9 +226,9 @@ currently provides. Today the project already has:
 - MSBuild integration and GitHub Actions.
 
 Important Foundation work still to be completed includes project-wide symbol/type
-resolution, stable `TCSxxxx` diagnostics with accurate locations, validation of
-namespace/using directives, richer C# type syntax, broader test coverage, and
-project-level C# -> Tiny.CSharp conversion.
+resolution, namespace/using semantic validation, additional C# type forms such as
+qualified generic names and nullable array references, broader diagnostics coverage,
+broader test coverage, and project-level C# -> Tiny.CSharp conversion.
 
 ## LLM system prompt
 
@@ -255,3 +274,21 @@ dotnet test Tiny.CSharp.sln
 ## License
 
 MIT
+
+
+## Diagnostics
+
+Tiny.CSharp diagnostics use stable category-based codes:
+
+| Range | Category |
+|---|---|
+| `TCS1xxx` | Tiny.CSharp syntax and parser diagnostics |
+| `TCS3xxx` | generated output and file-system diagnostics |
+| `TCS4xxx` | project and build diagnostics |
+| `TCS6xxx` | C# decompilation and unsupported C# constructs |
+
+Example:
+
+```text
+User.tcs(2,18): Error TCS1008: Invalid Tiny.CSharp type syntax 'List<s'.
+```
