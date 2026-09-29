@@ -19,6 +19,7 @@ public static class TinyDiagnosticCodes
     public const string ProjectDirectoryUnavailable = "TCS4001";
     public const string FileCompilationFailed = "TCS4002";
     public const string ProjectMetadataUnavailable = "TCS4003";
+    public const string ProjectAssetsUnavailable = "TCS4004";
 
     public const string InternalCompilerFailure = "TCS5001";
 
