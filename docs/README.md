@@ -7,6 +7,8 @@ constructs.
 
 - [Round-trip architecture](architecture/round-trip.md) — shared model, Roslyn
   decompilation, canonical formatting, and safety rules.
+- [Type resolution](architecture/type-resolution.md) — project symbol indexing,
+  deterministic candidate priority, automatic imports, and diagnostics.
 
 ## Language contract
 
