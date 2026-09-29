@@ -45,6 +45,15 @@ public class Program
                 : InvalidUsage();
         }
 
+        if (string.Equals(args[0], "benchmark-project", StringComparison.OrdinalIgnoreCase))
+        {
+            return args.Length >= 2
+                ? await BenchmarkProjectAsync(
+                    args[1],
+                    args.Skip(2))
+                : InvalidUsage();
+        }
+
         return InvalidUsage();
     }
 
@@ -215,6 +224,95 @@ public class Program
         return 0;
     }
 
+    private static async Task<int> BenchmarkProjectAsync(
+        string projectPath,
+        IEnumerable<string> encodings)
+    {
+        if (!File.Exists(projectPath))
+        {
+            Console.Error.WriteLine(
+                $"Project not found: {projectPath}");
+            return 1;
+        }
+
+        TinyProjectTokenBenchmarkResult result;
+
+        try
+        {
+            result = await new TinyProjectTokenBenchmark().BenchmarkAsync(
+                projectPath,
+                encodings);
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine(
+                $"Project token benchmark failed: {ex.Message}");
+            return 1;
+        }
+
+        if (!result.Success)
+        {
+            Console.Error.WriteLine(
+                "No supported C# files could be benchmarked.");
+
+            foreach (var diagnostic in result.Diagnostics)
+            {
+                Console.Error.WriteLine(
+                    $"{diagnostic.FilePath}({diagnostic.Line},{diagnostic.Column}): " +
+                    $"error {diagnostic.Code}: {diagnostic.Message}");
+            }
+
+            return 1;
+        }
+
+        Console.WriteLine(
+            $"Project token benchmark: {projectPath}");
+        Console.WriteLine(
+            $"Files: benchmarked={result.Files.Count}, " +
+            $"skipped={result.SkippedSourceFiles.Count}");
+        Console.WriteLine(
+            $"Characters: source={result.SourceCharacters}, " +
+            $"canonical-csharp={result.CanonicalCSharpCharacters}, " +
+            $"tiny={result.TinyCharacters}");
+        Console.WriteLine();
+        Console.WriteLine(
+            $"{"Encoding",-14} {"Source",8} {"Canonical",10} {"Tiny",8} " +
+            $"{"vs source",10} {"vs canonical",13} {"median",9} {"worst",9}");
+
+        foreach (var encoding in result.Encodings)
+        {
+            Console.WriteLine(
+                $"{encoding.Encoding,-14} " +
+                $"{encoding.SourceCSharpTokens,8} " +
+                $"{encoding.CanonicalCSharpTokens,10} " +
+                $"{encoding.TinyTokens,8} " +
+                $"{encoding.ReductionVsSourcePercent,9:F1}% " +
+                $"{encoding.ReductionVsCanonicalPercent,12:F1}% " +
+                $"{encoding.MedianReductionVsCanonicalPercent,8:F1}% " +
+                $"{encoding.WorstReductionVsCanonicalPercent,8:F1}%");
+
+            if (!string.IsNullOrWhiteSpace(encoding.WorstFile))
+            {
+                Console.WriteLine(
+                    $"  worst file: {encoding.WorstFile}");
+            }
+        }
+
+        if (!result.Complete)
+        {
+            Console.WriteLine();
+            Console.WriteLine(
+                "Skipped unsupported files:");
+
+            foreach (var path in result.SkippedSourceFiles)
+            {
+                Console.WriteLine($"  {path}");
+            }
+        }
+
+        return 0;
+    }
+
     private static int InvalidUsage()
     {
         PrintUsage();
@@ -228,5 +326,6 @@ public class Program
         Console.Error.WriteLine("  tinycs decompile <source.cs> [output.tcs]");
         Console.Error.WriteLine("  tinycs decompile-project <project.csproj> <output-directory>");
         Console.Error.WriteLine("  tinycs benchmark <source.cs> [encoding ...]");
+        Console.Error.WriteLine("  tinycs benchmark-project <project.csproj> [encoding ...]");
     }
 }
