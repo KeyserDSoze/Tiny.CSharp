@@ -1,3 +1,4 @@
+using TinyCSharp.Compiler.Benchmarking;
 using TinyCSharp.Compiler.Compilation;
 using TinyCSharp.Compiler.Decompilation;
 using TinyCSharp.Compiler.Generation;
@@ -32,6 +33,15 @@ public class Program
         {
             return args.Length == 3
                 ? await DecompileProjectAsync(args[1], args[2])
+                : InvalidUsage();
+        }
+
+        if (string.Equals(args[0], "benchmark", StringComparison.OrdinalIgnoreCase))
+        {
+            return args.Length >= 2
+                ? await BenchmarkFileAsync(
+                    args[1],
+                    args.Skip(2))
                 : InvalidUsage();
         }
 
@@ -140,6 +150,71 @@ public class Program
         return result.Success ? 0 : 1;
     }
 
+    private static async Task<int> BenchmarkFileAsync(
+        string csharpPath,
+        IEnumerable<string> encodings)
+    {
+        if (!File.Exists(csharpPath))
+        {
+            Console.Error.WriteLine(
+                $"C# file not found: {csharpPath}");
+            return 1;
+        }
+
+        var source = await File.ReadAllTextAsync(csharpPath);
+
+        TinyTokenBenchmarkResult result;
+
+        try
+        {
+            result = new TinyTokenBenchmark().Benchmark(
+                source,
+                csharpPath,
+                encodings);
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine(
+                $"Token benchmark failed: {ex.Message}");
+            return 1;
+        }
+
+        if (!result.Success)
+        {
+            foreach (var diagnostic in result.Diagnostics)
+            {
+                Console.Error.WriteLine(
+                    $"{csharpPath}({diagnostic.Line},{diagnostic.Column}): " +
+                    $"error {diagnostic.Code}: {diagnostic.Message}");
+            }
+
+            return 1;
+        }
+
+        Console.WriteLine($"Token benchmark: {csharpPath}");
+        Console.WriteLine(
+            $"Characters: source={result.SourceCharacters}, " +
+            $"canonical-csharp={result.CanonicalCSharpCharacters}, " +
+            $"tiny={result.TinyCharacters}");
+        Console.WriteLine();
+        Console.WriteLine(
+            $"{"Encoding",-14} {"Source",8} {"Canonical",10} {"Tiny",8} " +
+            $"{"vs source",10} {"vs canonical",13}");
+
+        foreach (var encoding in result.Encodings)
+        {
+            Console.WriteLine(
+                $"{encoding.Encoding,-14} " +
+                $"{encoding.SourceCSharpTokens,8} " +
+                $"{encoding.CanonicalCSharpTokens,10} " +
+                $"{encoding.TinyTokens,8} " +
+                $"{encoding.ReductionVsSourcePercent,9:F1}% " +
+                $"{encoding.ReductionVsCanonicalPercent,12:F1}%");
+        }
+
+        return 0;
+    }
+
     private static int InvalidUsage()
     {
         PrintUsage();
@@ -152,5 +227,6 @@ public class Program
         Console.Error.WriteLine("  tinycs compile <project.csproj>");
         Console.Error.WriteLine("  tinycs decompile <source.cs> [output.tcs]");
         Console.Error.WriteLine("  tinycs decompile-project <project.csproj> <output-directory>");
+        Console.Error.WriteLine("  tinycs benchmark <source.cs> [encoding ...]");
     }
 }
