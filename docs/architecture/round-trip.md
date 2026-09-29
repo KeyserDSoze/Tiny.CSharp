@@ -81,12 +81,17 @@ Project mode discovers C# files outside `bin/` and `obj/`, includes generated
 Tiny.CSharp-owned C# in the semantic compilation, but emits only handwritten
 supported files into a separate output directory.
 
+Project decompilation also constructs separate Roslyn compilations for recursively
+referenced projects and connects them through compilation references. Package
+compile assets from `project.assets.json` and explicit `Reference/HintPath`
+assemblies are added as metadata references. This preserves cross-project
+accessibility while allowing imports to be normalized from actual symbols.
+
 ## Next architectural step
 
-The semantic compilation currently includes source files plus trusted platform
-assemblies. The next resolution layer should load project references and NuGet
-assemblies from the project build graph, followed by namespace/import validation
-against that complete symbol universe.
+The next resolution layer is full MSBuild evaluation of conditional items,
+multi-targeting, central package-management edge cases, and target-specific project
+graphs, followed by broader semantic import validation.
 
 
 ## Stable diagnostics
