@@ -38,14 +38,17 @@ The first decompiler profile supports:
 - optional `sealed`;
 - public instance auto-properties;
 - `get; set;`, `get; init;`, and `get; private set;`;
-- current primitive aliases and simple named types;
+- primitive aliases and simple named types;
+- nullable element/value types such as `string?` and `int?`;
+- one-dimensional and jagged arrays;
+- recursively nested generic property types;
 - a single file-scoped or block namespace;
 - ordinary using directives.
 
 Examples of constructs deliberately rejected for now include attributes, methods,
-fields, constructors, generic classes, base types, interfaces, nullable type
-syntax, arrays, generic property types, property bodies, aliases, global usings,
-and static usings.
+fields, constructors, generic classes, base types, interfaces, multidimensional
+arrays, nullable array references that cannot be represented losslessly, property
+bodies, using aliases, global usings, and static usings.
 
 ## String default invariant
 
@@ -70,3 +73,11 @@ or `""`). This avoids changing initialization behavior during round trips.
 The next major expansion should use Roslyn semantic information to resolve named
 types and then extend the canonical model for richer type syntax. Syntax should be
 added to the language contract before either converter starts emitting it.
+
+
+## Stable diagnostics
+
+Diagnostics are part of the compiler contract, not incidental text. Parser errors
+use stable `TCS1xxx` codes and calculate 1-based source line/column positions.
+Decompiler syntax/coverage errors use `TCS6xxx`. Output and project failures use
+`TCS3xxx` and `TCS4xxx` respectively.
