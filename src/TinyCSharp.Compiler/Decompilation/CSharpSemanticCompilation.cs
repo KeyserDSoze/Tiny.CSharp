@@ -89,7 +89,7 @@ public sealed class CSharpSemanticCompilation
         return trustedAssemblies
             .Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries)
             .Distinct(StringComparer.OrdinalIgnoreCase)
-            .Select(MetadataReference.CreateFromFile)
+            .Select(path => MetadataReference.CreateFromFile(path))
             .ToArray();
     }
 }
