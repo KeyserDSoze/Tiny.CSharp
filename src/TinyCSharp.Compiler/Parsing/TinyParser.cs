@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Text;
 using TinyCSharp.Compiler.Compilation;
+using TinyCSharp.Compiler.Language;
 
 namespace TinyCSharp.Compiler.Parsing;
 
@@ -37,17 +38,25 @@ public sealed class TinyParser
             syntaxTree.Usings.Add(usingName);
             SkipWhitespaceAndComments();
         }
-        
-        // Parse class declaration
-        if (!Match("psc"))
+
+        // Parse compact type declaration. The canonical order is:
+        // accessibility + modifiers + kind.
+        // Current profile: p|i + optional s + c.
+        var declarationToken = ParseTypeDeclarationToken();
+        if (!TinyTypeDeclaration.TryParse(declarationToken, out var typeDeclaration))
         {
             _diagnostics.Add(new TinyDiagnostic(
-                TinyDiagnosticSeverity.Error, 
-                "Expected 'psc' keyword for public sealed class declaration", 
-                "", 0, 0));
+                TinyDiagnosticSeverity.Error,
+                $"Unsupported type declaration '{declarationToken}'. Expected pc, psc, ic, or isc",
+                "",
+                0,
+                0));
             syntaxTree.IsValid = false;
+            syntaxTree.Diagnostics = _diagnostics;
             return syntaxTree;
         }
+
+        syntaxTree.TypeDeclaration = typeDeclaration;
         
         SkipWhitespaceAndComments();
         
@@ -65,6 +74,7 @@ public sealed class TinyParser
                 "Expected '=>' after class name", 
                 "", 0, 0));
             syntaxTree.IsValid = false;
+            syntaxTree.Diagnostics = _diagnostics;
             return syntaxTree;
         }
         
@@ -98,6 +108,7 @@ public sealed class TinyParser
                     "Expected ',' or end of content", 
                     "", 0, 0));
                 syntaxTree.IsValid = false;
+                syntaxTree.Diagnostics = _diagnostics;
                 return syntaxTree;
             }
         }
@@ -105,6 +116,25 @@ public sealed class TinyParser
         syntaxTree.IsValid = _diagnostics.Count == 0;
         syntaxTree.Diagnostics = _diagnostics;
         return syntaxTree;
+    }
+
+    private string ParseTypeDeclarationToken()
+    {
+        var start = _position;
+
+        while (_position < _content.Length && !char.IsWhiteSpace(_content[_position]))
+        {
+            if (_content[_position] == '/' &&
+                _position + 1 < _content.Length &&
+                _content[_position + 1] == '/')
+            {
+                break;
+            }
+
+            _position++;
+        }
+
+        return _content.Substring(start, _position - start);
     }
     
     private bool Match(string token)
@@ -334,6 +364,7 @@ public sealed class TinySyntaxTree
 {
     public string SourceFilePath { get; set; } = "";
     public string Namespace { get; set; } = "";
+    public TinyTypeDeclaration TypeDeclaration { get; set; } = TinyTypeDeclaration.PublicSealedClass;
     public string ClassName { get; set; } = "";
     public List<TinyProperty> Properties { get; set; } = new List<TinyProperty>();
     public List<string> Usings { get; set; } = new List<string>();
