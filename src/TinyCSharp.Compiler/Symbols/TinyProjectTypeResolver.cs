@@ -305,21 +305,29 @@ public sealed class TinyProjectTypeResolver
             return type;
         }
 
-        var orderedCandidates = candidates
-            .OrderBy(candidate =>
+        var sameNamespaceCandidates = candidates
+            .Where(candidate =>
                 string.Equals(
                     candidate.Namespace,
                     document.Namespace,
-                    StringComparison.Ordinal)
-                    ? 0
-                    : 1)
-            .ThenBy(candidate =>
+                    StringComparison.Ordinal))
+            .ToArray();
+
+        var importedCandidates = candidates
+            .Where(candidate =>
                 document.Usings.Contains(
                     candidate.Namespace,
-                    StringComparer.Ordinal)
-                    ? 0
-                    : 1)
-            .ThenBy(candidate => GetSourcePriority(candidate.SourceKind))
+                    StringComparer.Ordinal))
+            .ToArray();
+
+        var bindingCandidates = sameNamespaceCandidates.Length > 0
+            ? sameNamespaceCandidates
+            : importedCandidates.Length > 0
+                ? importedCandidates
+                : candidates.ToArray();
+
+        var orderedCandidates = bindingCandidates
+            .OrderBy(candidate => GetSourcePriority(candidate.SourceKind))
             .ThenBy(
                 candidate => candidate.Namespace,
                 StringComparer.Ordinal)
