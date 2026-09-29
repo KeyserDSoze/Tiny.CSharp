@@ -302,3 +302,26 @@ TCS6xxx = C# decompilation
 
 When reporting a compiler diagnostic to a user, preserve its code, source location,
 and message.
+
+
+## Semantic project context
+
+When a Roslyn semantic context is available, type names are resolved against the
+whole source set before canonical Tiny.CSharp is emitted.
+
+Canonical behavior:
+
+- remove ordinary `u:` directives that are proven unnecessary;
+- retain or add the namespace required by an unqualified resolved type;
+- do not emit a `u:` for C# keyword types;
+- do not emit a `u:System` solely for `Guid` or `DateTime`, because the
+  Tiny.CSharp C# generator adds it automatically for those aliases;
+- preserve explicit qualified type spellings;
+- if a type name is genuinely ambiguous, report the compiler diagnostic instead of
+  choosing a candidate;
+- if an application type cannot be resolved in isolated single-file context,
+  preserve its textual spelling and existing imports rather than guessing.
+
+Project conversion must use a separate output tree. Generated C# already owned by an
+existing sibling `.tcs` file may participate in semantic resolution but must not be
+re-emitted as a second Tiny.CSharp source.
