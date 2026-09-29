@@ -124,6 +124,20 @@ public sealed class CompilerTests
     }
 
     [Fact]
+    public void Parse_DuplicateProperty_ReportsTcs1009()
+    {
+        var tree = new TinyParser().Parse(
+            "pc User => Id,Name,Id",
+            "User.tcs");
+
+        Assert.False(tree.IsValid);
+        var diagnostic = Assert.Single(tree.Diagnostics);
+        Assert.Equal("TCS1009", diagnostic.Code);
+        Assert.Equal(1, diagnostic.Line);
+        Assert.True(diagnostic.Column > 1);
+    }
+
+    [Fact]
     public void Parse_InvalidNamespace_ReportsTcs2003()
     {
         var tree = new TinyParser().Parse(
@@ -813,6 +827,64 @@ public sealed class CompilerTests
                 Path.Combine(root, "Model.cs"));
             Assert.Contains(
                 "using TinyCSharp.Compiler.Compilation;",
+                output);
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task CompileAsync_NormalizesFolderNamespace_AndWarns()
+    {
+        var root = Path.Combine(
+            Path.GetTempPath(),
+            "tinycs-namespace-normalize-" + Guid.NewGuid().ToString("N"));
+        var folder = Path.Combine(
+            root,
+            "Features",
+            "Match-Making",
+            "2Models");
+        Directory.CreateDirectory(folder);
+
+        try
+        {
+            var projectPath = Path.Combine(root, "Example.csproj");
+            await File.WriteAllTextAsync(
+                projectPath,
+                "<Project><PropertyGroup><TargetFramework>net10.0</TargetFramework><RootNamespace>Example</RootNamespace></PropertyGroup></Project>");
+            await File.WriteAllTextAsync(
+                Path.Combine(folder, "Match.tcs"),
+                "pc Match => Id");
+
+            var result = await new TinyProjectCompiler().CompileAsync(projectPath);
+
+            Assert.True(result.Success);
+            var warnings = result.Diagnostics
+                .Where(diagnostic =>
+                    diagnostic.Code == "TCS2006")
+                .ToArray();
+
+            Assert.Equal(2, warnings.Length);
+            Assert.Contains(
+                warnings,
+                diagnostic => diagnostic.Message.Contains(
+                    "Match_Making",
+                    StringComparison.Ordinal));
+            Assert.Contains(
+                warnings,
+                diagnostic => diagnostic.Message.Contains(
+                    "_2Models",
+                    StringComparison.Ordinal));
+
+            var output = await File.ReadAllTextAsync(
+                Path.Combine(folder, "Match.cs"));
+            Assert.Contains(
+                "namespace Example.Features.Match_Making._2Models;",
                 output);
         }
         finally
