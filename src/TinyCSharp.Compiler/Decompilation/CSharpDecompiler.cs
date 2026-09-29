@@ -172,7 +172,9 @@ public sealed class CSharpDecompiler
         {
             if (!modifier.IsKind(SyntaxKind.PublicKeyword) &&
                 !modifier.IsKind(SyntaxKind.InternalKeyword) &&
-                !modifier.IsKind(SyntaxKind.SealedKeyword))
+                !modifier.IsKind(SyntaxKind.AbstractKeyword) &&
+                !modifier.IsKind(SyntaxKind.SealedKeyword) &&
+                !modifier.IsKind(SyntaxKind.PartialKeyword))
             {
                 AddUnsupported(
                     diagnostics,
@@ -182,9 +184,23 @@ public sealed class CSharpDecompiler
             }
         }
 
+        var isAbstract = modifiers.Any(SyntaxKind.AbstractKeyword);
+        var isSealed = modifiers.Any(SyntaxKind.SealedKeyword);
+
+        if (isAbstract && isSealed)
+        {
+            AddUnsupported(
+                diagnostics,
+                classDeclaration,
+                "A class cannot be both abstract and sealed in the current Tiny.CSharp profile.");
+            return false;
+        }
+
         document.TypeDeclaration = new TinyTypeDeclaration(
             isPublic ? TinyAccessibility.Public : TinyAccessibility.Internal,
-            modifiers.Any(SyntaxKind.SealedKeyword),
+            isAbstract,
+            isSealed,
+            modifiers.Any(SyntaxKind.PartialKeyword),
             TinyTypeKind.Class);
         document.ClassName = classDeclaration.Identifier.ValueText;
 
