@@ -83,6 +83,33 @@ public class Types
     }
 
     [Fact]
+    public void Decompile_QualifiedGenericType_PreservesQualification()
+    {
+        const string source = """
+public class QualifiedTypes
+{
+    public System.Collections.Generic.List<string> Names { get; set; }
+    public System.Guid Id { get; init; }
+}
+""";
+
+        var result = new CSharpDecompiler().Decompile(source);
+        Assert.True(result.Success);
+
+        var tiny = new TinyFormatter().Format(result.Document!);
+
+        Assert.Contains("Names:System.Collections.Generic.List<s>", tiny);
+        Assert.Contains("Id:System.Guid|1", tiny);
+
+        var parsed = new TinyParser().Parse(tiny);
+        Assert.True(parsed.IsValid);
+
+        var regenerated = new CSharpGenerator().Generate(parsed);
+        Assert.Contains("public System.Collections.Generic.List<string> Names { get; set; }", regenerated);
+        Assert.Contains("public System.Guid Id { get; init; }", regenerated);
+    }
+
+    [Fact]
     public void Decompile_UnsupportedConstruct_ReportsStableDiagnosticCode()
     {
         const string source = """
