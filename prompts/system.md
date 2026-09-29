@@ -156,7 +156,14 @@ List<string>                    -> List<s>
 Dictionary<string, int>         -> Dictionary<s,i>
 Dictionary<string, List<int>>   -> Dictionary<s,List<i>>
 Task<Result>                    -> Task<Result>
+System.Guid                     -> System.Guid
+System.Collections.Generic.List<string>
+                                -> System.Collections.Generic.List<s>
 ```
+
+Explicit C# type qualification must be preserved; do not shorten `System.Guid`
+to `g` when the source deliberately used a qualified name, because doing so may
+change binding in an ambiguous context.
 
 Do not invent aliases for generic container names unless this contract explicitly
 defines them.
