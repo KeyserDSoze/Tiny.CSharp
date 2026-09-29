@@ -87,7 +87,7 @@ public sealed class TinyProjectTypeResolver
         type = type with { TypeArguments = resolvedArguments };
 
         if (TinyLanguage.GetCanonicalTypeToken(type.Name) != type.Name ||
-            type.Name.Contains('.', StringComparison.Ordinal))
+            type.Name.Contains('.'))
         {
             return type;
         }
