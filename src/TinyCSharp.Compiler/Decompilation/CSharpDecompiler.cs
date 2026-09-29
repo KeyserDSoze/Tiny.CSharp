@@ -318,7 +318,8 @@ public sealed class CSharpDecompiler
             }
 
             case NullableTypeSyntax nullable:
-                if (!TryReadType(nullable.ElementType, out var nullableElement))
+                if (!TryReadType(nullable.ElementType, out var nullableElement) ||
+                    nullableElement.ArrayDepth > 0)
                 {
                     return false;
                 }
