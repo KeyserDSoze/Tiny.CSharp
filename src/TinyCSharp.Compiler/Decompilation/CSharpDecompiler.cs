@@ -792,12 +792,22 @@ public sealed class CSharpDecompiler
         SyntaxNodeOrToken node,
         string message)
     {
-        var span = node.GetLocation().GetLineSpan();
+        var location = node.GetLocation();
+        var line = 1;
+        var column = 1;
+
+        if (location is not null)
+        {
+            var span = location.GetLineSpan();
+            line = span.StartLinePosition.Line + 1;
+            column = span.StartLinePosition.Character + 1;
+        }
+
         diagnostics.Add(new TinyDecompilationDiagnostic(
             code,
             message,
-            span.StartLinePosition.Line + 1,
-            span.StartLinePosition.Character + 1));
+            line,
+            column));
     }
 }
 
