@@ -28,6 +28,13 @@ public class Program
                 : InvalidUsage();
         }
 
+        if (string.Equals(args[0], "decompile-project", StringComparison.OrdinalIgnoreCase))
+        {
+            return args.Length == 3
+                ? await DecompileProjectAsync(args[1], args[2])
+                : InvalidUsage();
+        }
+
         return InvalidUsage();
     }
 
@@ -110,6 +117,28 @@ public class Program
         return 0;
     }
 
+    private static async Task<int> DecompileProjectAsync(
+        string projectPath,
+        string outputDirectory)
+    {
+        var decompiler = new CSharpProjectDecompiler();
+        var result = await decompiler.DecompileAsync(projectPath, outputDirectory);
+
+        foreach (var file in result.Files)
+        {
+            Console.WriteLine($"Generated: {file.OutputPath}");
+        }
+
+        foreach (var diagnostic in result.Diagnostics)
+        {
+            Console.Error.WriteLine(
+                $"{diagnostic.FilePath}({diagnostic.Line},{diagnostic.Column}): " +
+                $"error {diagnostic.Code}: {diagnostic.Message}");
+        }
+
+        return result.Success ? 0 : 1;
+    }
+
     private static int InvalidUsage()
     {
         PrintUsage();
@@ -121,5 +150,6 @@ public class Program
         Console.Error.WriteLine("Usage:");
         Console.Error.WriteLine("  tinycs compile <project.csproj>");
         Console.Error.WriteLine("  tinycs decompile <source.cs> [output.tcs]");
+        Console.Error.WriteLine("  tinycs decompile-project <project.csproj> <output-directory>");
     }
 }
