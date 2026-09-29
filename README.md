@@ -135,8 +135,12 @@ Primitive aliases compose recursively inside nullable types, arrays, and generic
 | `Dictionary<s,i>` | `Dictionary<string, int>` |
 | `Dictionary<s,List<i>>` | `Dictionary<string, List<int>>` |
 | `Task<Result>` | `Task<Result>` |
+| `System.Guid` | `System.Guid` |
+| `System.Collections.Generic.List<s>` | `System.Collections.Generic.List<string>` |
 
-The grammar deliberately keeps generic container names intact for now. Short aliases
+Qualified names are preserved when they are explicit in C#, because removing the
+qualification can change type binding. The grammar deliberately keeps generic
+container names intact for now. Short aliases
 for common framework types should only be introduced after tokenizer benchmarks
 show that they improve real LLM token usage.
 
