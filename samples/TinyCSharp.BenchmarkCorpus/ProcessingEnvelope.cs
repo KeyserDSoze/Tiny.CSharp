@@ -9,7 +9,3 @@ internal sealed class ProcessingEnvelope
     public Dictionary<string, List<int>> Values { get; set; }
     public Task<ProcessingResult> Result { get; init; }
 }
-
-public class ProcessingResult
-{
-}
