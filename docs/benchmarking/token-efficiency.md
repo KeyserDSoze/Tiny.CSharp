@@ -68,9 +68,24 @@ For changes intended primarily as token compression:
 No universal percentage threshold is fixed yet. The benchmark corpus needs to grow
 before a threshold can be statistically meaningful.
 
-## Future project benchmark
+## Project/corpus benchmark
 
-The next benchmark layer should aggregate a corpus/project and report totals,
-per-file distributions, median savings, and high-regression constructs. That data
-will be used to decide whether common generic container names such as `List`,
-`Dictionary`, and `Task` deserve dedicated Tiny aliases.
+Project benchmarking is implemented as:
+
+```bash
+tinycs benchmark-project <project.csproj> [encoding ...]
+```
+
+It reuses project-aware C# decompilation, benchmarks every supported handwritten C#
+file, and reports:
+
+- aggregate source/canonical/Tiny token counts;
+- aggregate percentage reductions;
+- median per-file reduction versus canonical C#;
+- worst per-file reduction and file path;
+- skipped unsupported files and their decompiler diagnostics.
+
+The repository includes `samples/TinyCSharp.BenchmarkCorpus`, which is executed
+by CI. This corpus is the initial evidence base for deciding whether common generic
+container names such as `List`, `Dictionary`, and `Task` deserve dedicated
+Tiny aliases. The corpus should grow before such aliases are standardized.
