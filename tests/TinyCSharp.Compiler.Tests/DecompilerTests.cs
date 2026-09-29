@@ -37,6 +37,36 @@ internal sealed class Match
             tiny);
     }
 
+    [Theory]
+    [InlineData("public abstract class", "pac")]
+    [InlineData("public partial class", "ppc")]
+    [InlineData("public partial abstract class", "papc")]
+    [InlineData("public sealed partial class", "pspc")]
+    [InlineData("internal partial abstract class", "iapc")]
+    public void Decompile_ClassModifiers_AreCanonicalized(
+        string declaration,
+        string expectedToken)
+    {
+        var source = $"""
+{{declaration}} Model
+{
+    public int Value { get; set; }
+}
+""";
+
+        var result = new CSharpDecompiler().Decompile(source);
+
+        Assert.True(result.Success);
+        Assert.Equal(
+            expectedToken,
+            result.Document!.TypeDeclaration.ToToken());
+
+        var tiny = new TinyFormatter().Format(result.Document);
+        Assert.Equal(
+            $"{expectedToken} Model => Value:i\n",
+            tiny);
+    }
+
     [Fact]
     public void Decompile_ClassWithoutAccessibility_UsesInternalCanonicalToken()
     {
