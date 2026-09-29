@@ -58,8 +58,28 @@ public sealed class CSharpGenerator
                 $"Unsupported accessibility: {syntaxTree.TypeDeclaration.Accessibility}")
         };
 
-        var sealedModifier = syntaxTree.TypeDeclaration.IsSealed ? " sealed" : string.Empty;
-        sb.AppendLine($"{accessibility}{sealedModifier} class {syntaxTree.ClassName}");
+        var modifiers = new List<string>();
+
+        if (syntaxTree.TypeDeclaration.IsAbstract)
+        {
+            modifiers.Add("abstract");
+        }
+        else if (syntaxTree.TypeDeclaration.IsSealed)
+        {
+            modifiers.Add("sealed");
+        }
+
+        if (syntaxTree.TypeDeclaration.IsPartial)
+        {
+            modifiers.Add("partial");
+        }
+
+        var modifierText = modifiers.Count == 0
+            ? string.Empty
+            : " " + string.Join(' ', modifiers);
+
+        sb.AppendLine(
+            $"{accessibility}{modifierText} class {syntaxTree.ClassName}");
         sb.AppendLine("{");
         
         // Add properties
