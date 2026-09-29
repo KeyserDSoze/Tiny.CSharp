@@ -10,10 +10,33 @@ public sealed class CSharpDecompiler
 {
     public TinyDecompilationResult Decompile(string source, string sourceFilePath = "")
     {
-        var diagnostics = new List<TinyDecompilationDiagnostic>();
-        var syntaxTree = CSharpSyntaxTree.ParseText(source);
+        var semanticPath = string.IsNullOrWhiteSpace(sourceFilePath)
+            ? "__tiny_single_file__.cs"
+            : sourceFilePath;
 
-        foreach (var diagnostic in syntaxTree.GetDiagnostics().Where(d => d.Severity == DiagnosticSeverity.Error))
+        var semanticCompilation = CSharpSemanticCompilation.Create(
+            new[] { new CSharpSourceDocument(semanticPath, source) });
+
+        var result = Decompile(semanticCompilation, semanticPath);
+
+        if (result.Document is not null && string.IsNullOrWhiteSpace(sourceFilePath))
+        {
+            result.Document.SourceFilePath = string.Empty;
+        }
+
+        return result;
+    }
+
+    public TinyDecompilationResult Decompile(
+        CSharpSemanticCompilation semanticCompilation,
+        string sourceFilePath)
+    {
+        var diagnostics = new List<TinyDecompilationDiagnostic>();
+        var syntaxTree = semanticCompilation.GetSyntaxTree(sourceFilePath);
+        var semanticModel = semanticCompilation.GetSemanticModel(sourceFilePath);
+
+        foreach (var diagnostic in syntaxTree.GetDiagnostics().Where(
+                     diagnostic => diagnostic.Severity == DiagnosticSeverity.Error))
         {
             var span = diagnostic.Location.GetLineSpan();
             diagnostics.Add(new TinyDecompilationDiagnostic(
@@ -71,9 +94,21 @@ public sealed class CSharpDecompiler
             return new TinyDecompilationResult(null, diagnostics);
         }
 
-        if (!TryReadClass(classDeclaration, document, diagnostics))
+        var allTypeNamesResolved = true;
+
+        if (!TryReadClass(
+                classDeclaration,
+                semanticModel,
+                document,
+                diagnostics,
+                ref allTypeNamesResolved))
         {
             return new TinyDecompilationResult(null, diagnostics);
+        }
+
+        if (allTypeNamesResolved)
+        {
+            NormalizeUsings(document);
         }
 
         return new TinyDecompilationResult(document, diagnostics);
@@ -106,8 +141,10 @@ public sealed class CSharpDecompiler
 
     private static bool TryReadClass(
         ClassDeclarationSyntax classDeclaration,
+        SemanticModel semanticModel,
         TinyDocument document,
-        List<TinyDecompilationDiagnostic> diagnostics)
+        List<TinyDecompilationDiagnostic> diagnostics,
+        ref bool allTypeNamesResolved)
     {
         if (classDeclaration.AttributeLists.Count > 0 ||
             classDeclaration.TypeParameterList is not null ||
@@ -162,11 +199,17 @@ public sealed class CSharpDecompiler
                 return false;
             }
 
-            if (!TryReadProperty(propertyDeclaration, out var property, diagnostics))
+            if (!TryReadProperty(
+                    propertyDeclaration,
+                    semanticModel,
+                    out var property,
+                    diagnostics,
+                    out var propertyTypeResolved))
             {
                 return false;
             }
 
+            allTypeNamesResolved &= propertyTypeResolved;
             document.Properties.Add(property);
         }
 
@@ -175,10 +218,13 @@ public sealed class CSharpDecompiler
 
     private static bool TryReadProperty(
         PropertyDeclarationSyntax declaration,
+        SemanticModel semanticModel,
         out TinyProperty property,
-        List<TinyDecompilationDiagnostic> diagnostics)
+        List<TinyDecompilationDiagnostic> diagnostics,
+        out bool typeNamesResolved)
     {
         property = null!;
+        typeNamesResolved = true;
 
         if (declaration.AttributeLists.Count > 0 ||
             declaration.ExplicitInterfaceSpecifier is not null ||
@@ -201,12 +247,13 @@ public sealed class CSharpDecompiler
             return false;
         }
 
-        if (!TryReadType(declaration.Type, out var type))
-        {
-            AddUnsupported(
-                diagnostics,
+        if (!TryReadType(
                 declaration.Type,
-                $"Property type '{declaration.Type}' is not representable by the current Tiny.CSharp type grammar.");
+                semanticModel,
+                out var type,
+                diagnostics,
+                out typeNamesResolved))
+        {
             return false;
         }
 
@@ -274,9 +321,15 @@ public sealed class CSharpDecompiler
         return true;
     }
 
-    private static bool TryReadType(TypeSyntax syntax, out TinyType type)
+    private static bool TryReadType(
+        TypeSyntax syntax,
+        SemanticModel semanticModel,
+        out TinyType type,
+        List<TinyDecompilationDiagnostic> diagnostics,
+        out bool allNamesResolved)
     {
         type = TinyType.String;
+        allNamesResolved = true;
 
         switch (syntax)
         {
@@ -288,49 +341,92 @@ public sealed class CSharpDecompiler
                         out var expanded) ||
                     !string.Equals(expanded, name, StringComparison.Ordinal))
                 {
+                    AddUnsupported(
+                        diagnostics,
+                        syntax,
+                        $"Predefined type '{syntax}' is not supported by the current Tiny.CSharp profile.");
                     return false;
                 }
 
-                type = new TinyType(name, Array.Empty<TinyType>());
+                type = new TinyType(
+                    name,
+                    Array.Empty<TinyType>(),
+                    ResolvedNamespace: "System");
                 return true;
             }
 
             case IdentifierNameSyntax identifier:
-                type = new TinyType(identifier.Identifier.ValueText, Array.Empty<TinyType>());
-                return true;
+                return TryReadSimpleNamedType(
+                    identifier,
+                    identifier.Identifier.ValueText,
+                    semanticModel,
+                    Array.Empty<TinyType>(),
+                    diagnostics,
+                    out type,
+                    out allNamesResolved);
 
             case GenericNameSyntax generic:
             {
                 var arguments = new List<TinyType>();
+                var argumentsResolved = true;
 
                 foreach (var argumentSyntax in generic.TypeArgumentList.Arguments)
                 {
-                    if (!TryReadType(argumentSyntax, out var argument))
+                    if (!TryReadType(
+                            argumentSyntax,
+                            semanticModel,
+                            out var argument,
+                            diagnostics,
+                            out var argumentResolved))
                     {
                         return false;
                     }
 
+                    argumentsResolved &= argumentResolved;
                     arguments.Add(argument);
                 }
 
-                type = new TinyType(generic.Identifier.ValueText, arguments);
-                return true;
-            }
-
-            case QualifiedNameSyntax qualified:
-            {
-                if (!TryReadQualifiedType(qualified, out type))
+                if (!TryReadSimpleNamedType(
+                        generic,
+                        generic.Identifier.ValueText,
+                        semanticModel,
+                        arguments,
+                        diagnostics,
+                        out type,
+                        out var genericResolved))
                 {
                     return false;
                 }
 
+                allNamesResolved = argumentsResolved && genericResolved;
                 return true;
             }
 
+            case QualifiedNameSyntax qualified:
+                return TryReadQualifiedType(
+                    qualified,
+                    semanticModel,
+                    diagnostics,
+                    out type,
+                    out allNamesResolved);
+
             case NullableTypeSyntax nullable:
-                if (!TryReadType(nullable.ElementType, out var nullableElement) ||
+                if (!TryReadType(
+                        nullable.ElementType,
+                        semanticModel,
+                        out var nullableElement,
+                        diagnostics,
+                        out allNamesResolved) ||
                     nullableElement.ArrayDepth > 0)
                 {
+                    if (nullableElement.ArrayDepth > 0)
+                    {
+                        AddUnsupported(
+                            diagnostics,
+                            nullable,
+                            "Nullable array references are not representable losslessly by the current Tiny.CSharp type grammar.");
+                    }
+
                     return false;
                 }
 
@@ -338,60 +434,267 @@ public sealed class CSharpDecompiler
                 return true;
 
             case ArrayTypeSyntax array:
-                if (!TryReadType(array.ElementType, out var element))
+                if (!TryReadType(
+                        array.ElementType,
+                        semanticModel,
+                        out var element,
+                        diagnostics,
+                        out allNamesResolved))
                 {
                     return false;
                 }
 
                 if (array.RankSpecifiers.Any(rank => rank.Rank != 1))
                 {
+                    AddUnsupported(
+                        diagnostics,
+                        array,
+                        "Multidimensional arrays are not supported by the current Tiny.CSharp type grammar.");
                     return false;
                 }
 
-                type = element with { ArrayDepth = element.ArrayDepth + array.RankSpecifiers.Count };
+                type = element with
+                {
+                    ArrayDepth = element.ArrayDepth + array.RankSpecifiers.Count
+                };
                 return true;
 
             default:
+                AddUnsupported(
+                    diagnostics,
+                    syntax,
+                    $"Property type '{syntax}' is not representable by the current Tiny.CSharp type grammar.");
                 return false;
         }
     }
 
-    private static bool TryReadQualifiedType(
-        QualifiedNameSyntax qualified,
-        out TinyType type)
+    private static bool TryReadSimpleNamedType(
+        TypeSyntax syntax,
+        string sourceName,
+        SemanticModel semanticModel,
+        IReadOnlyList<TinyType> typeArguments,
+        List<TinyDecompilationDiagnostic> diagnostics,
+        out TinyType type,
+        out bool resolved)
     {
         type = TinyType.String;
-        var prefix = qualified.Left.ToString();
 
-        if (qualified.Right is IdentifierNameSyntax identifier)
+        if (!TryResolveNamespace(
+                syntax,
+                semanticModel,
+                diagnostics,
+                out var resolvedNamespace,
+                out resolved))
         {
-            type = new TinyType(
-                $"{prefix}.{identifier.Identifier.ValueText}",
-                Array.Empty<TinyType>());
-            return true;
+            return false;
         }
+
+        type = new TinyType(
+            sourceName,
+            typeArguments,
+            ResolvedNamespace: resolvedNamespace);
+
+        return true;
+    }
+
+    private static bool TryReadQualifiedType(
+        QualifiedNameSyntax qualified,
+        SemanticModel semanticModel,
+        List<TinyDecompilationDiagnostic> diagnostics,
+        out TinyType type,
+        out bool allNamesResolved)
+    {
+        type = TinyType.String;
+        allNamesResolved = true;
+
+        var arguments = new List<TinyType>();
 
         if (qualified.Right is GenericNameSyntax generic)
         {
-            var arguments = new List<TinyType>();
-
             foreach (var argumentSyntax in generic.TypeArgumentList.Arguments)
             {
-                if (!TryReadType(argumentSyntax, out var argument))
+                if (!TryReadType(
+                        argumentSyntax,
+                        semanticModel,
+                        out var argument,
+                        diagnostics,
+                        out var argumentResolved))
                 {
                     return false;
                 }
 
+                allNamesResolved &= argumentResolved;
                 arguments.Add(argument);
             }
+        }
+        else if (qualified.Right is not IdentifierNameSyntax)
+        {
+            AddUnsupported(
+                diagnostics,
+                qualified,
+                $"Qualified type '{qualified}' is not supported by the current Tiny.CSharp profile.");
+            return false;
+        }
 
-            type = new TinyType(
-                $"{prefix}.{generic.Identifier.ValueText}",
-                arguments);
+        if (!TryResolveNamespace(
+                qualified,
+                semanticModel,
+                diagnostics,
+                out var resolvedNamespace,
+                out var qualifiedResolved))
+        {
+            return false;
+        }
+
+        // A qualified source spelling is itself sufficient to reproduce the type.
+        // Semantic resolution is still captured when available so using directives
+        // can be normalized without changing binding.
+        var rightName = qualified.Right switch
+        {
+            GenericNameSyntax genericName => genericName.Identifier.ValueText,
+            IdentifierNameSyntax identifierName => identifierName.Identifier.ValueText,
+            _ => throw new InvalidOperationException()
+        };
+
+        type = new TinyType(
+            $"{qualified.Left}.{rightName}",
+            arguments,
+            ResolvedNamespace: resolvedNamespace);
+
+        allNamesResolved &= qualifiedResolved || IsNamespaceQualified(type);
+        return true;
+    }
+
+    private static bool TryResolveNamespace(
+        TypeSyntax syntax,
+        SemanticModel semanticModel,
+        List<TinyDecompilationDiagnostic> diagnostics,
+        out string? namespaceName,
+        out bool resolved)
+    {
+        namespaceName = null;
+        resolved = false;
+
+        var typeInfo = semanticModel.GetTypeInfo(syntax);
+        if (typeInfo.Type is ITypeSymbol typeSymbol &&
+            typeSymbol.TypeKind != TypeKind.Error)
+        {
+            namespaceName = GetNamespace(typeSymbol);
+            resolved = true;
             return true;
         }
 
-        return false;
+        var symbolInfo = semanticModel.GetSymbolInfo(syntax);
+        if (symbolInfo.CandidateReason == CandidateReason.Ambiguous)
+        {
+            var candidates = string.Join(
+                ", ",
+                symbolInfo.CandidateSymbols.Select(
+                    symbol => symbol.ToDisplayString(SymbolDisplayFormat.CSharpErrorMessageFormat)));
+
+            AddAmbiguous(
+                diagnostics,
+                syntax,
+                string.IsNullOrWhiteSpace(candidates)
+                    ? $"Type '{syntax}' is ambiguous."
+                    : $"Type '{syntax}' is ambiguous between: {candidates}.");
+            return false;
+        }
+
+        // Unresolved project/application types are preserved textually in single-file
+        // mode. A multi-file semantic context can resolve them and unlock using
+        // canonicalization.
+        return true;
+    }
+
+    private static string? GetNamespace(ITypeSymbol typeSymbol)
+    {
+        ITypeSymbol target = typeSymbol;
+
+        while (target is IArrayTypeSymbol array)
+        {
+            target = array.ElementType;
+        }
+
+        if (target is INamedTypeSymbol named &&
+            named.OriginalDefinition.SpecialType == SpecialType.System_Nullable_T &&
+            named.TypeArguments.Length == 1)
+        {
+            target = named.TypeArguments[0];
+        }
+
+        var containingNamespace = target.ContainingNamespace;
+
+        return containingNamespace is null || containingNamespace.IsGlobalNamespace
+            ? null
+            : containingNamespace.ToDisplayString();
+    }
+
+    private static void NormalizeUsings(TinyDocument document)
+    {
+        var requiredNamespaces = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var property in document.Properties)
+        {
+            CollectRequiredNamespaces(
+                property.Type,
+                document.Namespace,
+                requiredNamespaces);
+        }
+
+        document.Usings.Clear();
+        document.Usings.AddRange(requiredNamespaces.OrderBy(
+            value => value,
+            StringComparer.Ordinal));
+    }
+
+    private static void CollectRequiredNamespaces(
+        TinyType type,
+        string documentNamespace,
+        ISet<string> requiredNamespaces)
+    {
+        if (!string.IsNullOrWhiteSpace(type.ResolvedNamespace) &&
+            !string.Equals(
+                type.ResolvedNamespace,
+                documentNamespace,
+                StringComparison.Ordinal) &&
+            RequiresExplicitUsing(type))
+        {
+            requiredNamespaces.Add(type.ResolvedNamespace);
+        }
+
+        foreach (var argument in type.TypeArguments)
+        {
+            CollectRequiredNamespaces(
+                argument,
+                documentNamespace,
+                requiredNamespaces);
+        }
+    }
+
+    private static bool RequiresExplicitUsing(TinyType type)
+    {
+        if (TinyLanguage.GetCanonicalTypeToken(type.Name) != type.Name)
+        {
+            // C# keywords need no import. DateTime and Guid are automatically
+            // imported by CSharpGenerator when their Tiny aliases are used.
+            return false;
+        }
+
+        if (IsNamespaceQualified(type))
+        {
+            return false;
+        }
+
+        return true;
+    }
+
+    private static bool IsNamespaceQualified(TinyType type)
+    {
+        return !string.IsNullOrWhiteSpace(type.ResolvedNamespace) &&
+               type.Name.StartsWith(
+                   type.ResolvedNamespace + ".",
+                   StringComparison.Ordinal);
     }
 
     private static bool ValidateInitializer(
@@ -461,9 +764,34 @@ public sealed class CSharpDecompiler
         SyntaxNodeOrToken node,
         string message)
     {
+        AddDiagnostic(
+            diagnostics,
+            TinyDiagnosticCodes.UnsupportedCSharpConstruct,
+            node,
+            message);
+    }
+
+    private static void AddAmbiguous(
+        List<TinyDecompilationDiagnostic> diagnostics,
+        SyntaxNodeOrToken node,
+        string message)
+    {
+        AddDiagnostic(
+            diagnostics,
+            TinyDiagnosticCodes.AmbiguousCSharpType,
+            node,
+            message);
+    }
+
+    private static void AddDiagnostic(
+        List<TinyDecompilationDiagnostic> diagnostics,
+        string code,
+        SyntaxNodeOrToken node,
+        string message)
+    {
         var span = node.GetLocation().GetLineSpan();
         diagnostics.Add(new TinyDecompilationDiagnostic(
-            TinyDiagnosticCodes.UnsupportedCSharpConstruct,
+            code,
             message,
             span.StartLinePosition.Line + 1,
             span.StartLinePosition.Character + 1));
