@@ -19,10 +19,18 @@ public sealed class TinyProjectTypeResolver
         bool emitAutomaticUsings = true,
         CancellationToken cancellationToken = default)
     {
-        if (documents.Count == 0 ||
-            !documents.Any(document =>
-                document.Properties.Any(property =>
-                    NeedsResolution(property.Type))))
+        if (documents.Count == 0)
+        {
+            return Array.Empty<TinyDiagnostic>();
+        }
+
+        var needsTypeResolution = documents.Any(document =>
+            document.Properties.Any(property =>
+                NeedsResolution(property.Type)));
+        var needsUsingValidation = documents.Any(document =>
+            document.Usings.Count > 0);
+
+        if (!needsTypeResolution && !needsUsingValidation)
         {
             return Array.Empty<TinyDiagnostic>();
         }
@@ -106,6 +114,11 @@ public sealed class TinyProjectTypeResolver
             metadataReferences,
             rootNode.AssemblyName);
         var index = new Dictionary<TypeKey, List<TypeCandidate>>();
+        var knownNamespaces = new HashSet<string>(StringComparer.Ordinal);
+
+        CollectNamespaces(
+            semanticCompilation.Compilation.Assembly.GlobalNamespace,
+            knownNamespaces);
 
         VisitNamespace(
             semanticCompilation.Compilation.Assembly.GlobalNamespace,
@@ -130,6 +143,10 @@ public sealed class TinyProjectTypeResolver
                 ? externalKind
                 : TinyTypeSourceKind.Framework;
 
+            CollectNamespaces(
+                assembly.GlobalNamespace,
+                knownNamespaces);
+
             VisitNamespace(
                 assembly.GlobalNamespace,
                 allowInternal: false,
@@ -146,6 +163,10 @@ public sealed class TinyProjectTypeResolver
                 metadataReferences,
                 cancellationToken);
 
+            CollectNamespaces(
+                referencedCompilation.Compilation.Assembly.GlobalNamespace,
+                knownNamespaces);
+
             VisitNamespace(
                 referencedCompilation.Compilation.Assembly.GlobalNamespace,
                 allowInternal: false,
@@ -159,6 +180,25 @@ public sealed class TinyProjectTypeResolver
 
         foreach (var document in documents)
         {
+            foreach (var usingNamespace in document.Usings)
+            {
+                if (!knownNamespaces.Contains(usingNamespace))
+                {
+                    diagnostics.Add(new TinyDiagnostic(
+                        TinyDiagnosticSeverity.Error,
+                        $"Using namespace '{usingNamespace}' could not be resolved in the project symbol universe.",
+                        document.SourceFilePath,
+                        1,
+                        1,
+                        Code: TinyDiagnosticCodes.UnknownUsingNamespace));
+                }
+            }
+
+            if (!needsTypeResolution)
+            {
+                continue;
+            }
+
             foreach (var property in document.Properties)
             {
                 property.Type = ResolveType(
@@ -424,6 +464,23 @@ public sealed class TinyProjectTypeResolver
                     StringComparer.Ordinal)
                 .Select(group => group.First())
                 .ToArray());
+    }
+
+    private static void CollectNamespaces(
+        INamespaceSymbol namespaceSymbol,
+        ISet<string> namespaces)
+    {
+        if (!namespaceSymbol.IsGlobalNamespace)
+        {
+            namespaces.Add(namespaceSymbol.ToDisplayString());
+        }
+
+        foreach (var childNamespace in namespaceSymbol.GetNamespaceMembers())
+        {
+            CollectNamespaces(
+                childNamespace,
+                namespaces);
+        }
     }
 
     private static void VisitNamespace(
