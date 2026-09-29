@@ -157,6 +157,37 @@ psc Match => Result:MatchResult
 If `n:` is omitted, the compiler infers a namespace from the project root
 namespace and the relative directory containing the `.tcs` file.
 
+
+## Tiny.CSharp type resolution
+
+Compilation is project-oriented. All valid `.tcs` declarations are parsed before
+named property types are resolved.
+
+For a simple named type, the current resolver searches:
+
+1. Tiny.CSharp declarations in the current project;
+2. handwritten C# declarations in the current project;
+3. framework assemblies available to Roslyn.
+
+Candidate priority is deterministic:
+
+1. same generated namespace;
+2. explicitly imported namespace;
+3. current-project Tiny.CSharp declaration;
+4. current-project handwritten C# declaration;
+5. framework type;
+6. namespace, qualified name, and assembly identity in ordinal order.
+
+A unique cross-namespace match produces an automatic `using`. If multiple
+accessible candidates exist, Tiny.CSharp emits warning `TCS2001`, selects the
+highest-priority candidate, and fully qualifies it in generated C# so the warning
+does not create a new C# ambiguity. If no candidate exists, warning `TCS2002` is
+emitted and the original type spelling is left unchanged for the standard C#
+compiler to validate.
+
+Project-reference and NuGet assembly loading are the next resolver layer; the
+current symbol universe is current-project source plus trusted platform assemblies.
+
 ## Compiler
 
 Compile all `.tcs` files in a project with:
@@ -233,6 +264,10 @@ currently provides. Today the project already has:
 - primitive property aliases and accessor modes;
 - compositional nullable, array, and generic property types;
 - stable `TCSxxxx` diagnostic codes with parser line/column reporting;
+- project-wide resolution of simple named types from Tiny.CSharp, handwritten C#,
+  and framework assemblies;
+- deterministic `TCS2001` ambiguity selection and `TCS2002` unresolved warnings;
+- automatic using generation for resolved cross-namespace types;
 - compact public/internal class declarations with optional `sealed`;
 - a shared canonical `TinyDocument` model and centralized type aliases;
 - a Roslyn-based C# -> Tiny.CSharp decompiler for the supported subset;
@@ -302,8 +337,10 @@ Tiny.CSharp diagnostics use stable category-based codes:
 | Range | Category |
 |---|---|
 | `TCS1xxx` | Tiny.CSharp syntax and parser diagnostics |
+| `TCS2xxx` | namespace and type-resolution diagnostics |
 | `TCS3xxx` | generated output and file-system diagnostics |
 | `TCS4xxx` | project and build diagnostics |
+| `TCS5xxx` | internal compiler diagnostics |
 | `TCS6xxx` | C# decompilation and unsupported C# constructs |
 
 Example:
