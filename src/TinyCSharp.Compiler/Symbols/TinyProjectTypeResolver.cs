@@ -18,7 +18,10 @@ public sealed class TinyProjectTypeResolver
         bool emitAutomaticUsings = true,
         CancellationToken cancellationToken = default)
     {
-        if (documents.Count == 0)
+        if (documents.Count == 0 ||
+            !documents.Any(document =>
+                document.Properties.Any(property =>
+                    NeedsResolution(property.Type))))
         {
             return Array.Empty<TinyDiagnostic>();
         }
@@ -64,6 +67,17 @@ public sealed class TinyProjectTypeResolver
         }
 
         return diagnostics;
+    }
+
+    private static bool NeedsResolution(TinyType type)
+    {
+        if (type.TypeArguments.Any(NeedsResolution))
+        {
+            return true;
+        }
+
+        return TinyLanguage.GetCanonicalTypeToken(type.Name) == type.Name &&
+               !type.Name.Contains('.');
     }
 
     private static TinyType ResolveType(
