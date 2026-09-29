@@ -122,10 +122,11 @@ public sealed class TinyParser
 
         var type = TinyType.String;
         var mode = 0;
+        var typePosition = _position;
 
         if (Match(":"))
         {
-            var typePosition = _position;
+            typePosition = _position;
             var typeToken = ParseTypeToken();
 
             if (string.IsNullOrWhiteSpace(typeToken))
@@ -177,7 +178,13 @@ public sealed class TinyParser
             }
         }
 
-        return new TinyProperty(propertyName, type, mode);
+        var (typeLine, typeColumn) = GetLineColumn(typePosition);
+        return new TinyProperty(
+            propertyName,
+            type,
+            mode,
+            typeLine,
+            typeColumn);
     }
 
     private string ParseTypeToken()
