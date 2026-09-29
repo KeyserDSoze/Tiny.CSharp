@@ -1,12 +1,55 @@
+using System.Text.Json;
 using TinyCSharp.Compiler.Compilation;
 using TinyCSharp.Compiler.Generation;
+using TinyCSharp.Compiler.Language;
 using TinyCSharp.Compiler.Parsing;
+using TinyCSharp.Compiler.Projects;
 using Xunit;
 
 namespace TinyCSharp.Compiler.Tests;
 
 public sealed class CompilerTests
 {
+    [Theory]
+    [InlineData("pc", "public class")]
+    [InlineData("psc", "public sealed class")]
+    [InlineData("ic", "internal class")]
+    [InlineData("isc", "internal sealed class")]
+    [InlineData("pac", "public abstract class")]
+    [InlineData("ppc", "public partial class")]
+    [InlineData("papc", "public abstract partial class")]
+    [InlineData("pspc", "public sealed partial class")]
+    [InlineData("iapc", "internal abstract partial class")]
+    public void Parse_CompactTypeDeclaration_IsCanonical(string token, string expectedDeclaration)
+    {
+        var parser = new TinyParser();
+        var tree = parser.Parse($"{token} Match => Id");
+
+        Assert.True(tree.IsValid);
+        Assert.Equal(token, tree.TypeDeclaration.ToToken());
+
+        var generator = new CSharpGenerator();
+        var output = generator.Generate(tree);
+        Assert.Contains($"{expectedDeclaration} Match", output);
+    }
+
+    [Theory]
+    [InlineData("pasc")]
+    [InlineData("ppac")]
+    [InlineData("psac")]
+    [InlineData("paapc")]
+    public void Parse_NonCanonicalClassModifiers_AreRejected(
+        string token)
+    {
+        var tree = new TinyParser().Parse(
+            $"{token} Model => Id",
+            "Model.tcs");
+
+        Assert.False(tree.IsValid);
+        var diagnostic = Assert.Single(tree.Diagnostics);
+        Assert.Equal("TCS1001", diagnostic.Code);
+    }
+
     [Fact]
     public void Parse_PscDeclaration_WithAliasesAndModes()
     {
@@ -16,10 +59,10 @@ public sealed class CompilerTests
         Assert.True(tree.IsValid);
         Assert.Equal("Match", tree.ClassName);
         Assert.Equal(5, tree.Properties.Count);
-        Assert.Equal("string", tree.Properties[0].Type);
+        Assert.Equal("string", tree.Properties[0].Type.ToCSharp());
         Assert.Equal(0, tree.Properties[0].Mode);
-        Assert.Equal("int", tree.Properties[2].Type);
-        Assert.Equal("DateTime", tree.Properties[3].Type);
+        Assert.Equal("int", tree.Properties[2].Type.ToCSharp());
+        Assert.Equal("DateTime", tree.Properties[3].Type.ToCSharp());
         Assert.Equal(1, tree.Properties[3].Mode);
         Assert.Equal(2, tree.Properties[4].Mode);
     }
@@ -33,7 +76,7 @@ public sealed class CompilerTests
         Assert.True(tree.IsValid);
         Assert.Equal("MyCompany.Domain", tree.Namespace);
         Assert.Equal(new[] { "System.Collections.Generic", "MyCompany.Contracts" }, tree.Usings);
-        Assert.Equal("MatchResult", tree.Properties[0].Type);
+        Assert.Equal("MatchResult", tree.Properties[0].Type.ToCSharp());
     }
 
     [Fact]
@@ -62,6 +105,865 @@ public sealed class CompilerTests
         Assert.Contains("public string Id { get; set; } = string.Empty;", output);
         Assert.Contains("public int Number { get; init; }", output);
         Assert.Contains("public int Code { get; private set; }", output);
+    }
+
+    [Fact]
+    public void Parse_CompositionalTypes_ExpandsAliasesRecursively()
+    {
+        var parser = new TinyParser();
+        var tree = parser.Parse(
+            "psc Types => Maybe:s?,Ids:g[],Names:List<s>,Map:Dictionary<s,List<i>>,Work:Task<Result>|1");
+
+        Assert.True(tree.IsValid);
+        Assert.Equal("string?", tree.Properties[0].Type.ToCSharp());
+        Assert.Equal("Guid[]", tree.Properties[1].Type.ToCSharp());
+        Assert.Equal("List<string>", tree.Properties[2].Type.ToCSharp());
+        Assert.Equal("Dictionary<string,List<int>>", tree.Properties[3].Type.ToCSharp());
+        Assert.Equal("Task<Result>", tree.Properties[4].Type.ToCSharp());
+
+        var output = new CSharpGenerator().Generate(tree);
+        Assert.Contains("using System;", output);
+        Assert.Contains("public string? Maybe { get; set; }", output);
+        Assert.Contains("public Guid[] Ids { get; set; }", output);
+        Assert.Contains("public Dictionary<string,List<int>> Map { get; set; }", output);
+        Assert.DoesNotContain("Maybe { get; set; } = string.Empty;", output);
+    }
+
+    [Fact]
+    public void Parse_InvalidType_ReportsStableCodeAndLocation()
+    {
+        var parser = new TinyParser();
+        var tree = parser.Parse(
+            "n:Example\npsc User => Name,List:List<s",
+            "User.tcs");
+
+        Assert.False(tree.IsValid);
+        var diagnostic = Assert.Single(tree.Diagnostics);
+        Assert.Equal("TCS1008", diagnostic.Code);
+        Assert.Equal("User.tcs", diagnostic.FilePath);
+        Assert.Equal(2, diagnostic.Line);
+        Assert.True(diagnostic.Column > 1);
+    }
+
+    [Fact]
+    public void Parse_DuplicateProperty_ReportsTcs1009()
+    {
+        var tree = new TinyParser().Parse(
+            "pc User => Id,Name,Id",
+            "User.tcs");
+
+        Assert.False(tree.IsValid);
+        var diagnostic = Assert.Single(tree.Diagnostics);
+        Assert.Equal("TCS1009", diagnostic.Code);
+        Assert.Equal(1, diagnostic.Line);
+        Assert.True(diagnostic.Column > 1);
+    }
+
+    [Fact]
+    public void Parse_InvalidNamespace_ReportsTcs2003()
+    {
+        var tree = new TinyParser().Parse(
+            "n:Example.Bad-Name\npc Model => Id",
+            "Model.tcs");
+
+        Assert.False(tree.IsValid);
+        var diagnostic = Assert.Single(tree.Diagnostics);
+        Assert.Equal("TCS2003", diagnostic.Code);
+        Assert.Equal(1, diagnostic.Line);
+        Assert.True(diagnostic.Column > 1);
+    }
+
+    [Fact]
+    public void Parse_InvalidUsing_ReportsTcs2004()
+    {
+        var tree = new TinyParser().Parse(
+            "u:System.Collections.Generic<>\npc Model => Id",
+            "Model.tcs");
+
+        Assert.False(tree.IsValid);
+        var diagnostic = Assert.Single(tree.Diagnostics);
+        Assert.Equal("TCS2004", diagnostic.Code);
+    }
+
+    [Fact]
+    public void Parse_NamespaceAfterUsing_ReportsTcs2005()
+    {
+        var tree = new TinyParser().Parse(
+            "u:System\nn:Example\npc Model => Id",
+            "Model.tcs");
+
+        Assert.False(tree.IsValid);
+        var diagnostic = Assert.Single(tree.Diagnostics);
+        Assert.Equal("TCS2005", diagnostic.Code);
+        Assert.Equal(2, diagnostic.Line);
+    }
+
+    [Fact]
+    public void Parse_DuplicateUsings_AreCanonicalized()
+    {
+        var tree = new TinyParser().Parse(
+            "u:System.Collections.Generic\nu:System.Collections.Generic\npc Model => Values:List<i>");
+
+        Assert.True(tree.IsValid);
+        Assert.Single(tree.Usings);
+        Assert.Equal("System.Collections.Generic", tree.Usings[0]);
+    }
+
+    [Fact]
+    public async Task CompileAsync_ResolvesTypeFromAnotherTinyFile_AndAddsUsing()
+    {
+        var root = Path.Combine(
+            Path.GetTempPath(),
+            "tinycs-resolution-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(Path.Combine(root, "Contracts"));
+        Directory.CreateDirectory(Path.Combine(root, "Models"));
+
+        try
+        {
+            var projectPath = Path.Combine(root, "Example.csproj");
+            await File.WriteAllTextAsync(
+                projectPath,
+                "<Project><PropertyGroup><TargetFramework>net10.0</TargetFramework><RootNamespace>Example</RootNamespace></PropertyGroup></Project>");
+
+            await File.WriteAllTextAsync(
+                Path.Combine(root, "Contracts", "Team.tcs"),
+                "pc Team => Id");
+            await File.WriteAllTextAsync(
+                Path.Combine(root, "Models", "Match.tcs"),
+                "psc Match => HomeTeam:Team");
+
+            var result = await new TinyProjectCompiler().CompileAsync(projectPath);
+
+            Assert.True(result.Success);
+            Assert.DoesNotContain(
+                result.Diagnostics,
+                diagnostic => diagnostic.Code == "TCS2002");
+
+            var output = await File.ReadAllTextAsync(
+                Path.Combine(root, "Models", "Match.cs"));
+            Assert.Contains("using Example.Contracts;", output);
+            Assert.Contains("public Team HomeTeam { get; set; }", output);
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task CompileAsync_ResolvesTypeFromHandwrittenCSharp()
+    {
+        var root = Path.Combine(
+            Path.GetTempPath(),
+            "tinycs-csharp-resolution-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(Path.Combine(root, "Contracts"));
+        Directory.CreateDirectory(Path.Combine(root, "Models"));
+
+        try
+        {
+            var projectPath = Path.Combine(root, "Example.csproj");
+            await File.WriteAllTextAsync(
+                projectPath,
+                "<Project><PropertyGroup><TargetFramework>net10.0</TargetFramework><RootNamespace>Example</RootNamespace></PropertyGroup></Project>");
+            await File.WriteAllTextAsync(
+                Path.Combine(root, "Contracts", "HandwrittenResolutionContract.cs"),
+                "namespace Example.Contracts; public class HandwrittenResolutionContract { }");
+            await File.WriteAllTextAsync(
+                Path.Combine(root, "Models", "Model.tcs"),
+                "pc Model => Value:HandwrittenResolutionContract");
+
+            var result = await new TinyProjectCompiler().CompileAsync(projectPath);
+
+            Assert.True(result.Success);
+            var output = await File.ReadAllTextAsync(
+                Path.Combine(root, "Models", "Model.cs"));
+            Assert.Contains("using Example.Contracts;", output);
+            Assert.Contains(
+                "public HandwrittenResolutionContract Value { get; set; }",
+                output);
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task CompileAsync_UnresolvedType_WarnsAndEmitsNameUnchanged()
+    {
+        var root = Path.Combine(
+            Path.GetTempPath(),
+            "tinycs-unresolved-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+
+        try
+        {
+            var projectPath = Path.Combine(root, "Example.csproj");
+            await File.WriteAllTextAsync(
+                projectPath,
+                "<Project><PropertyGroup><TargetFramework>net10.0</TargetFramework><RootNamespace>Example</RootNamespace></PropertyGroup></Project>");
+            await File.WriteAllTextAsync(
+                Path.Combine(root, "Model.tcs"),
+                "pc Model => Value:MissingType");
+
+            var result = await new TinyProjectCompiler().CompileAsync(projectPath);
+
+            Assert.True(result.Success);
+            var diagnostic = Assert.Single(
+                result.Diagnostics,
+                diagnostic => diagnostic.Code == "TCS2002");
+            Assert.Equal(TinyDiagnosticSeverity.Warning, diagnostic.Severity);
+            Assert.True(diagnostic.Line > 0);
+            Assert.True(diagnostic.Column > 0);
+
+            var output = await File.ReadAllTextAsync(
+                Path.Combine(root, "Model.cs"));
+            Assert.Contains("public MissingType Value { get; set; }", output);
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task CompileAsync_ExplicitUsing_ResolvesAmbiguityWithoutWarning()
+    {
+        var root = Path.Combine(
+            Path.GetTempPath(),
+            "tinycs-explicit-using-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(Path.Combine(root, "A"));
+        Directory.CreateDirectory(Path.Combine(root, "B"));
+        Directory.CreateDirectory(Path.Combine(root, "Models"));
+
+        try
+        {
+            var projectPath = Path.Combine(root, "Example.csproj");
+            await File.WriteAllTextAsync(
+                projectPath,
+                "<Project><PropertyGroup><TargetFramework>net10.0</TargetFramework><RootNamespace>Example</RootNamespace></PropertyGroup></Project>");
+            await File.WriteAllTextAsync(
+                Path.Combine(root, "A", "Team.tcs"),
+                "pc Team => Id");
+            await File.WriteAllTextAsync(
+                Path.Combine(root, "B", "Team.tcs"),
+                "pc Team => Id");
+            await File.WriteAllTextAsync(
+                Path.Combine(root, "Models", "Match.tcs"),
+                "u:Example.B\npc Match => HomeTeam:Team");
+
+            var result = await new TinyProjectCompiler().CompileAsync(projectPath);
+
+            Assert.True(result.Success);
+            Assert.DoesNotContain(
+                result.Diagnostics,
+                diagnostic => diagnostic.Code == "TCS2001");
+
+            var output = await File.ReadAllTextAsync(
+                Path.Combine(root, "Models", "Match.cs"));
+
+            Assert.Contains("using Example.B;", output);
+            Assert.Contains(
+                "public Team HomeTeam { get; set; }",
+                output);
+            Assert.DoesNotContain(
+                "public Example.A.Team HomeTeam",
+                output);
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task CompileAsync_AmbiguousType_WarnsAndQualifiesDeterministicSelection()
+    {
+        var root = Path.Combine(
+            Path.GetTempPath(),
+            "tinycs-ambiguous-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(Path.Combine(root, "A"));
+        Directory.CreateDirectory(Path.Combine(root, "B"));
+        Directory.CreateDirectory(Path.Combine(root, "Models"));
+
+        try
+        {
+            var projectPath = Path.Combine(root, "Example.csproj");
+            await File.WriteAllTextAsync(
+                projectPath,
+                "<Project><PropertyGroup><TargetFramework>net10.0</TargetFramework><RootNamespace>Example</RootNamespace></PropertyGroup></Project>");
+            await File.WriteAllTextAsync(
+                Path.Combine(root, "A", "Team.tcs"),
+                "pc Team => Id");
+            await File.WriteAllTextAsync(
+                Path.Combine(root, "B", "Team.tcs"),
+                "pc Team => Id");
+            await File.WriteAllTextAsync(
+                Path.Combine(root, "Models", "Match.tcs"),
+                "pc Match => HomeTeam:Team");
+
+            var result = await new TinyProjectCompiler().CompileAsync(projectPath);
+
+            Assert.True(result.Success);
+            var diagnostic = Assert.Single(
+                result.Diagnostics,
+                diagnostic => diagnostic.Code == "TCS2001");
+            Assert.Contains("Example.A.Team", diagnostic.Message);
+            Assert.Contains("Example.B.Team", diagnostic.Message);
+
+            var output = await File.ReadAllTextAsync(
+                Path.Combine(root, "Models", "Match.cs"));
+            Assert.Contains(
+                "public Example.A.Team HomeTeam { get; set; }",
+                output);
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task CompileAsync_ResolvesDirectProjectReference()
+    {
+        var root = Path.Combine(
+            Path.GetTempPath(),
+            "tinycs-direct-ref-" + Guid.NewGuid().ToString("N"));
+        var app = Path.Combine(root, "App");
+        var contracts = Path.Combine(root, "Contracts");
+        Directory.CreateDirectory(app);
+        Directory.CreateDirectory(contracts);
+
+        try
+        {
+            var contractsProject = Path.Combine(contracts, "Contracts.csproj");
+            await File.WriteAllTextAsync(
+                contractsProject,
+                "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup></Project>");
+            await File.WriteAllTextAsync(
+                Path.Combine(contracts, "DirectReferencedContract.cs"),
+                "namespace Referenced.Contracts; public class DirectReferencedContract { }");
+
+            var appProject = Path.Combine(app, "App.csproj");
+            await File.WriteAllTextAsync(
+                appProject,
+                """
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>App</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Contracts/Contracts.csproj" />
+  </ItemGroup>
+</Project>
+""");
+            await File.WriteAllTextAsync(
+                Path.Combine(app, "Model.tcs"),
+                "pc Model => Value:DirectReferencedContract");
+
+            var result = await new TinyProjectCompiler().CompileAsync(appProject);
+
+            Assert.True(result.Success);
+            Assert.DoesNotContain(
+                result.Diagnostics,
+                diagnostic => diagnostic.Code == "TCS2002");
+
+            var output = await File.ReadAllTextAsync(
+                Path.Combine(app, "Model.cs"));
+            Assert.Contains("using Referenced.Contracts;", output);
+            Assert.Contains(
+                "public DirectReferencedContract Value { get; set; }",
+                output);
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task CompileAsync_ResolvesTransitiveProjectReference()
+    {
+        var root = Path.Combine(
+            Path.GetTempPath(),
+            "tinycs-transitive-ref-" + Guid.NewGuid().ToString("N"));
+        var app = Path.Combine(root, "App");
+        var middle = Path.Combine(root, "Middle");
+        var contracts = Path.Combine(root, "Contracts");
+        Directory.CreateDirectory(app);
+        Directory.CreateDirectory(middle);
+        Directory.CreateDirectory(contracts);
+
+        try
+        {
+            var contractsProject = Path.Combine(contracts, "Contracts.csproj");
+            await File.WriteAllTextAsync(
+                contractsProject,
+                "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup></Project>");
+            await File.WriteAllTextAsync(
+                Path.Combine(contracts, "TransitiveReferencedContract.cs"),
+                "namespace Referenced.Transitive; public class TransitiveReferencedContract { }");
+
+            var middleProject = Path.Combine(middle, "Middle.csproj");
+            await File.WriteAllTextAsync(
+                middleProject,
+                """
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Contracts/Contracts.csproj" />
+  </ItemGroup>
+</Project>
+""");
+
+            var appProject = Path.Combine(app, "App.csproj");
+            await File.WriteAllTextAsync(
+                appProject,
+                """
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>App</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Middle/Middle.csproj" />
+  </ItemGroup>
+</Project>
+""");
+            await File.WriteAllTextAsync(
+                Path.Combine(app, "Model.tcs"),
+                "pc Model => Value:TransitiveReferencedContract");
+
+            var result = await new TinyProjectCompiler().CompileAsync(appProject);
+
+            Assert.True(result.Success);
+            var output = await File.ReadAllTextAsync(
+                Path.Combine(app, "Model.cs"));
+            Assert.Contains("using Referenced.Transitive;", output);
+            Assert.Contains(
+                "public TransitiveReferencedContract Value { get; set; }",
+                output);
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task CompileAsync_IgnoresInternalTypeFromReferencedProject()
+    {
+        var root = Path.Combine(
+            Path.GetTempPath(),
+            "tinycs-internal-ref-" + Guid.NewGuid().ToString("N"));
+        var app = Path.Combine(root, "App");
+        var contracts = Path.Combine(root, "Contracts");
+        Directory.CreateDirectory(app);
+        Directory.CreateDirectory(contracts);
+
+        try
+        {
+            var contractsProject = Path.Combine(contracts, "Contracts.csproj");
+            await File.WriteAllTextAsync(
+                contractsProject,
+                "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup></Project>");
+            await File.WriteAllTextAsync(
+                Path.Combine(contracts, "HiddenContract.cs"),
+                "namespace Referenced.Contracts; internal class HiddenContract { }");
+
+            var appProject = Path.Combine(app, "App.csproj");
+            await File.WriteAllTextAsync(
+                appProject,
+                """
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Contracts/Contracts.csproj" />
+  </ItemGroup>
+</Project>
+""");
+            await File.WriteAllTextAsync(
+                Path.Combine(app, "Model.tcs"),
+                "pc Model => Value:HiddenContract");
+
+            var result = await new TinyProjectCompiler().CompileAsync(appProject);
+
+            Assert.True(result.Success);
+            Assert.Contains(
+                result.Diagnostics,
+                diagnostic => diagnostic.Code == "TCS2002");
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task CompileAsync_DirectProjectReference_BeatsTransitiveCandidate()
+    {
+        var root = Path.Combine(
+            Path.GetTempPath(),
+            "tinycs-ref-priority-" + Guid.NewGuid().ToString("N"));
+        var app = Path.Combine(root, "App");
+        var direct = Path.Combine(root, "Direct");
+        var middle = Path.Combine(root, "Middle");
+        var transitive = Path.Combine(root, "Transitive");
+        Directory.CreateDirectory(app);
+        Directory.CreateDirectory(direct);
+        Directory.CreateDirectory(middle);
+        Directory.CreateDirectory(transitive);
+
+        try
+        {
+            var transitiveProject = Path.Combine(transitive, "Transitive.csproj");
+            await File.WriteAllTextAsync(
+                transitiveProject,
+                "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup></Project>");
+            await File.WriteAllTextAsync(
+                Path.Combine(transitive, "SharedReferenceType.cs"),
+                "namespace A.Transitive; public class SharedReferenceType { }");
+
+            var middleProject = Path.Combine(middle, "Middle.csproj");
+            await File.WriteAllTextAsync(
+                middleProject,
+                """
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Transitive/Transitive.csproj" />
+  </ItemGroup>
+</Project>
+""");
+
+            var directProject = Path.Combine(direct, "Direct.csproj");
+            await File.WriteAllTextAsync(
+                directProject,
+                "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup></Project>");
+            await File.WriteAllTextAsync(
+                Path.Combine(direct, "SharedReferenceType.cs"),
+                "namespace Z.Direct; public class SharedReferenceType { }");
+
+            var appProject = Path.Combine(app, "App.csproj");
+            await File.WriteAllTextAsync(
+                appProject,
+                """
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Direct/Direct.csproj" />
+    <ProjectReference Include="../Middle/Middle.csproj" />
+  </ItemGroup>
+</Project>
+""");
+            await File.WriteAllTextAsync(
+                Path.Combine(app, "Model.tcs"),
+                "pc Model => Value:SharedReferenceType");
+
+            var result = await new TinyProjectCompiler().CompileAsync(appProject);
+
+            Assert.True(result.Success);
+            var diagnostic = Assert.Single(
+                result.Diagnostics,
+                diagnostic => diagnostic.Code == "TCS2001");
+            Assert.Contains("Selected 'Z.Direct.SharedReferenceType'", diagnostic.Message);
+
+            var output = await File.ReadAllTextAsync(
+                Path.Combine(app, "Model.cs"));
+            Assert.Contains(
+                "public Z.Direct.SharedReferenceType Value { get; set; }",
+                output);
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task CompileAsync_ResolvesDirectHintPathAssembly()
+    {
+        var root = Path.Combine(
+            Path.GetTempPath(),
+            "tinycs-hintpath-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+
+        try
+        {
+            var compilerAssembly = typeof(TinyProjectCompiler).Assembly.Location;
+            var projectPath = Path.Combine(root, "Example.csproj");
+            await File.WriteAllTextAsync(
+                projectPath,
+                $"""
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup>
+  <ItemGroup>
+    <Reference Include="TinyCSharp.Compiler">
+      <HintPath>{compilerAssembly}</HintPath>
+    </Reference>
+  </ItemGroup>
+</Project>
+""");
+            await File.WriteAllTextAsync(
+                Path.Combine(root, "Model.tcs"),
+                "pc Model => Compiler:TinyProjectCompiler");
+
+            var result = await new TinyProjectCompiler().CompileAsync(projectPath);
+
+            Assert.True(result.Success);
+            var output = await File.ReadAllTextAsync(
+                Path.Combine(root, "Model.cs"));
+            Assert.Contains(
+                "using TinyCSharp.Compiler.Compilation;",
+                output);
+            Assert.Contains(
+                "public TinyProjectCompiler Compiler { get; set; }",
+                output);
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task CompileAsync_ResolvesPackageCompileAsset_FromProjectAssets()
+    {
+        var root = Path.Combine(
+            Path.GetTempPath(),
+            "tinycs-package-assets-" + Guid.NewGuid().ToString("N"));
+        var packageRoot = Path.Combine(root, "packages");
+        var packageAssemblyDirectory = Path.Combine(
+            packageRoot,
+            "tiny.fake.package",
+            "1.0.0",
+            "lib",
+            "net10.0");
+        var obj = Path.Combine(root, "obj");
+        Directory.CreateDirectory(packageAssemblyDirectory);
+        Directory.CreateDirectory(obj);
+
+        try
+        {
+            var compilerAssembly = typeof(TinyProjectCompiler).Assembly.Location;
+            var copiedAssembly = Path.Combine(
+                packageAssemblyDirectory,
+                "TinyCSharp.Compiler.dll");
+            File.Copy(
+                compilerAssembly,
+                copiedAssembly,
+                overwrite: true);
+
+            var projectPath = Path.Combine(root, "Example.csproj");
+            await File.WriteAllTextAsync(
+                projectPath,
+                """
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Tiny.Fake.Package" Version="1.0.0" />
+  </ItemGroup>
+</Project>
+""");
+
+            var normalizedPackageRoot =
+                packageRoot.Replace('\\', '/') + "/";
+            var assets = new Dictionary<string, object?>
+            {
+                ["version"] = 3,
+                ["targets"] = new Dictionary<string, object?>
+                {
+                    ["net10.0"] = new Dictionary<string, object?>
+                    {
+                        ["Tiny.Fake.Package/1.0.0"] = new Dictionary<string, object?>
+                        {
+                            ["compile"] = new Dictionary<string, object?>
+                            {
+                                ["lib/net10.0/TinyCSharp.Compiler.dll"] =
+                                    new Dictionary<string, object?>()
+                            }
+                        }
+                    }
+                },
+                ["libraries"] = new Dictionary<string, object?>
+                {
+                    ["Tiny.Fake.Package/1.0.0"] = new Dictionary<string, object?>
+                    {
+                        ["type"] = "package",
+                        ["path"] = "tiny.fake.package/1.0.0"
+                    }
+                },
+                ["packageFolders"] = new Dictionary<string, object?>
+                {
+                    [normalizedPackageRoot] = new Dictionary<string, object?>()
+                }
+            };
+
+            await File.WriteAllTextAsync(
+                Path.Combine(obj, "project.assets.json"),
+                JsonSerializer.Serialize(assets));
+
+            await File.WriteAllTextAsync(
+                Path.Combine(root, "Model.tcs"),
+                "pc Model => Compiler:TinyProjectCompiler");
+
+            var result = await new TinyProjectCompiler().CompileAsync(projectPath);
+
+            Assert.True(result.Success);
+            Assert.DoesNotContain(
+                result.Diagnostics,
+                diagnostic => diagnostic.Code == "TCS2002");
+
+            var output = await File.ReadAllTextAsync(
+                Path.Combine(root, "Model.cs"));
+            Assert.Contains(
+                "using TinyCSharp.Compiler.Compilation;",
+                output);
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task CompileAsync_UnknownUsingNamespace_FailsWithoutReplacingSiblingCs()
+    {
+        var root = Path.Combine(
+            Path.GetTempPath(),
+            "tinycs-unknown-using-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+
+        try
+        {
+            var projectPath = Path.Combine(root, "Example.csproj");
+            await File.WriteAllTextAsync(
+                projectPath,
+                "<Project><PropertyGroup><TargetFramework>net10.0</TargetFramework><RootNamespace>Example</RootNamespace></PropertyGroup></Project>");
+
+            var tcsPath = Path.Combine(root, "Model.tcs");
+            var csPath = Path.Combine(root, "Model.cs");
+
+            await File.WriteAllTextAsync(
+                tcsPath,
+                "u:Missing.Namespace\npc Model => Id");
+            await File.WriteAllTextAsync(
+                csPath,
+                "// preserve me\npublic class ExistingModel { }");
+
+            var result = await new TinyProjectCompiler().CompileAsync(projectPath);
+
+            Assert.False(result.Success);
+            var diagnostic = Assert.Single(
+                result.Diagnostics,
+                diagnostic => diagnostic.Code == "TCS2007");
+            Assert.Equal(
+                TinyDiagnosticSeverity.Error,
+                diagnostic.Severity);
+
+            var existing = await File.ReadAllTextAsync(csPath);
+            Assert.Contains("// preserve me", existing);
+            Assert.DoesNotContain("// <auto-generated />", existing);
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task CompileAsync_NormalizesFolderNamespace_AndWarns()
+    {
+        var root = Path.Combine(
+            Path.GetTempPath(),
+            "tinycs-namespace-normalize-" + Guid.NewGuid().ToString("N"));
+        var folder = Path.Combine(
+            root,
+            "Features",
+            "Match-Making",
+            "2Models");
+        Directory.CreateDirectory(folder);
+
+        try
+        {
+            var projectPath = Path.Combine(root, "Example.csproj");
+            await File.WriteAllTextAsync(
+                projectPath,
+                "<Project><PropertyGroup><TargetFramework>net10.0</TargetFramework><RootNamespace>Example</RootNamespace></PropertyGroup></Project>");
+            await File.WriteAllTextAsync(
+                Path.Combine(folder, "Match.tcs"),
+                "pc Match => Id");
+
+            var result = await new TinyProjectCompiler().CompileAsync(projectPath);
+
+            Assert.True(result.Success);
+            var warnings = result.Diagnostics
+                .Where(diagnostic =>
+                    diagnostic.Code == "TCS2006")
+                .ToArray();
+
+            Assert.Equal(2, warnings.Length);
+            Assert.Contains(
+                warnings,
+                diagnostic => diagnostic.Message.Contains(
+                    "Match_Making",
+                    StringComparison.Ordinal));
+            Assert.Contains(
+                warnings,
+                diagnostic => diagnostic.Message.Contains(
+                    "_2Models",
+                    StringComparison.Ordinal));
+
+            var output = await File.ReadAllTextAsync(
+                Path.Combine(folder, "Match.cs"));
+            Assert.Contains(
+                "namespace Example.Features.Match_Making._2Models;",
+                output);
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
     }
 
     [Fact]

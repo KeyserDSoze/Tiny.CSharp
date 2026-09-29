@@ -22,8 +22,8 @@ jobs:
       run: dotnet restore Tiny.CSharp.sln
       working-directory: ${{ github.workspace }}
       
-    - name: Build
-      run: dotnet build src/TinyCSharp.Compiler/TinyCSharp.Compiler.csproj --no-restore
+    - name: Build solution
+      run: dotnet build Tiny.CSharp.sln --no-restore
       working-directory: ${{ github.workspace }}
 
     - name: Test unit
@@ -35,6 +35,13 @@ jobs:
       working-directory: ${{ github.workspace }}
 
     - name: Run sample compilation
-      run: dotnet build samples/TinyCSharp.Sample/TinyCSharp.Sample.csproj --verbosity normal
+      run: dotnet build samples/TinyCSharp.Sample/TinyCSharp.Sample.csproj --no-restore --verbosity normal
       working-directory: ${{ github.workspace }}
-      
+
+    - name: Run token benchmark
+      run: dotnet run --project src/TinyCSharp.Compiler/TinyCSharp.Compiler.csproj --no-build -- benchmark samples/TinyCSharp.Sample/Match.cs
+      working-directory: ${{ github.workspace }}
+
+    - name: Run project token benchmark
+      run: dotnet run --project src/TinyCSharp.Compiler/TinyCSharp.Compiler.csproj --no-build -- benchmark-project samples/TinyCSharp.BenchmarkCorpus/TinyCSharp.BenchmarkCorpus.csproj
+      working-directory: ${{ github.workspace }}

@@ -1,290 +1,413 @@
-using System;
-using System.Collections.Generic;
-using System.Text;
+using Microsoft.CodeAnalysis.CSharp;
 using TinyCSharp.Compiler.Compilation;
+using TinyCSharp.Compiler.Diagnostics;
+using TinyCSharp.Compiler.Language;
 
 namespace TinyCSharp.Compiler.Parsing;
 
 public sealed class TinyParser
 {
     private string _content = string.Empty;
+    private string _sourceFilePath = string.Empty;
     private int _position;
     private List<TinyDiagnostic> _diagnostics = new();
-    
-    public TinySyntaxTree Parse(string content)
+
+    public TinySyntaxTree Parse(string content, string sourceFilePath = "")
     {
         _content = content;
+        _sourceFilePath = sourceFilePath;
         _position = 0;
         _diagnostics = new List<TinyDiagnostic>();
-        
-        var syntaxTree = new TinySyntaxTree();
-        
-        // Skip whitespace and comments
+
+        var syntaxTree = new TinySyntaxTree
+        {
+            SourceFilePath = sourceFilePath
+        };
+
         SkipWhitespaceAndComments();
-        
-        // Parse namespace directive if present
+
         if (Match("n:"))
         {
-            var namespaceName = ParseNamespace();
+            var namespacePosition = _position;
+            var namespaceName = ParseLineValue();
+
+            if (!IsValidNamespaceName(namespaceName))
+            {
+                AddError(
+                    TinyDiagnosticCodes.InvalidNamespace,
+                    $"Invalid namespace '{namespaceName}'.",
+                    namespacePosition);
+                return Invalid(syntaxTree);
+            }
+
             syntaxTree.Namespace = namespaceName;
             SkipWhitespaceAndComments();
         }
-        
-        // Parse using directives if present
+
         while (Match("u:"))
         {
-            var usingName = ParseUsing();
-            syntaxTree.Usings.Add(usingName);
+            var usingPosition = _position;
+            var usingName = ParseLineValue();
+
+            if (!IsValidNamespaceName(usingName))
+            {
+                AddError(
+                    TinyDiagnosticCodes.InvalidUsing,
+                    $"Invalid using namespace '{usingName}'.",
+                    usingPosition);
+                return Invalid(syntaxTree);
+            }
+
+            if (!syntaxTree.Usings.Contains(
+                    usingName,
+                    StringComparer.Ordinal))
+            {
+                syntaxTree.Usings.Add(usingName);
+                var (usingLine, usingColumn) =
+                    GetLineColumn(usingPosition);
+                syntaxTree.UsingLocations[usingName] =
+                    new TinySourceLocation(
+                        usingLine,
+                        usingColumn);
+            }
+
             SkipWhitespaceAndComments();
         }
-        
-        // Parse class declaration
-        if (!Match("psc"))
+
+        if (Match("n:"))
         {
-            _diagnostics.Add(new TinyDiagnostic(
-                TinyDiagnosticSeverity.Error, 
-                "Expected 'psc' keyword for public sealed class declaration", 
-                "", 0, 0));
-            syntaxTree.IsValid = false;
-            return syntaxTree;
+            AddError(
+                TinyDiagnosticCodes.InvalidNamespaceDirectiveOrder,
+                "The namespace directive may appear only once and before all using directives.",
+                _position - 2);
+            return Invalid(syntaxTree);
         }
-        
+
+        var declarationPosition = _position;
+        var declarationToken = ParseTypeDeclarationToken();
+        if (!TinyTypeDeclaration.TryParse(declarationToken, out var typeDeclaration))
+        {
+            AddError(
+                TinyDiagnosticCodes.UnsupportedTypeDeclaration,
+                $"Unsupported or non-canonical type declaration '{declarationToken}'.",
+                declarationPosition);
+            return Invalid(syntaxTree);
+        }
+
+        syntaxTree.TypeDeclaration = typeDeclaration;
         SkipWhitespaceAndComments();
-        
-        // Parse class name
+
         var className = ParseIdentifier();
+        if (string.IsNullOrEmpty(className))
+        {
+            return Invalid(syntaxTree);
+        }
+
         syntaxTree.ClassName = className;
-        
         SkipWhitespaceAndComments();
-        
-        // Parse property list
+
         if (!Match("=>"))
         {
-            _diagnostics.Add(new TinyDiagnostic(
-                TinyDiagnosticSeverity.Error, 
-                "Expected '=>' after class name", 
-                "", 0, 0));
-            syntaxTree.IsValid = false;
-            return syntaxTree;
+            AddError(
+                TinyDiagnosticCodes.ExpectedClassArrow,
+                "Expected '=>' after class name.",
+                _position);
+            return Invalid(syntaxTree);
         }
-        
+
         SkipWhitespaceAndComments();
-        
-        // Parse properties
+
         while (!IsEndOfContent())
         {
+            var propertyPosition = _position;
             var property = ParseProperty();
-            if (property == null)
-                break;
-            
+            if (property is null)
+            {
+                return Invalid(syntaxTree);
+            }
+
+            if (syntaxTree.Properties.Any(existing =>
+                    string.Equals(
+                        existing.Name,
+                        property.Name,
+                        StringComparison.Ordinal)))
+            {
+                AddError(
+                    TinyDiagnosticCodes.DuplicateProperty,
+                    $"Property '{property.Name}' is declared more than once.",
+                    propertyPosition);
+                return Invalid(syntaxTree);
+            }
+
             syntaxTree.Properties.Add(property);
-            
             SkipWhitespaceAndComments();
-            
-            // Check for comma or end
+
             if (Match(","))
             {
                 SkipWhitespaceAndComments();
                 continue;
             }
-            else if (IsEndOfContent())
+
+            if (IsEndOfContent())
             {
                 break;
             }
-            else
-            {
-                _diagnostics.Add(new TinyDiagnostic(
-                    TinyDiagnosticSeverity.Error, 
-                    "Expected ',' or end of content", 
-                    "", 0, 0));
-                syntaxTree.IsValid = false;
-                return syntaxTree;
-            }
+
+            AddError(
+                TinyDiagnosticCodes.ExpectedPropertySeparator,
+                "Expected ',' or end of content after property declaration.",
+                _position);
+            return Invalid(syntaxTree);
         }
-        
+
         syntaxTree.IsValid = _diagnostics.Count == 0;
         syntaxTree.Diagnostics = _diagnostics;
         return syntaxTree;
     }
-    
-    private bool Match(string token)
+
+    private TinySyntaxTree Invalid(TinySyntaxTree tree)
     {
-        if (_position + token.Length > _content.Length)
-            return false;
-        
-        var substring = _content.Substring(_position, token.Length);
-        if (substring == token)
-        {
-            _position += token.Length;
-            return true;
-        }
-        
-        return false;
+        tree.IsValid = false;
+        tree.Diagnostics = _diagnostics;
+        return tree;
     }
-    
-    private string ParseIdentifier()
-    {
-        var start = _position;
-        
-        if (_position >= _content.Length || !char.IsLetter(_content[_position]))
-        {
-            _diagnostics.Add(new TinyDiagnostic(
-                TinyDiagnosticSeverity.Error, 
-                "Expected identifier", 
-                "", 0, 0));
-            return "";
-        }
-        
-        while (_position < _content.Length && 
-               (char.IsLetterOrDigit(_content[_position]) || _content[_position] == '_'))
-        {
-            _position++;
-        }
-        
-        return _content.Substring(start, _position - start);
-    }
-    
-    private string ParseNamespace()
-    {
-        var start = _position;
-        
-        while (_position < _content.Length && 
-               (_content[_position] != '\n' && _content[_position] != '\r'))
-        {
-            _position++;
-        }
-        
-        var namespaceName = _content.Substring(start, _position - start).Trim();
-        
-        // Skip to end of line
-        if (_position < _content.Length && (_content[_position] == '\n' || _content[_position] == '\r'))
-        {
-            _position++;
-            if (_position < _content.Length && _content[_position] == '\r')
-                _position++;
-        }
-        
-        return namespaceName;
-    }
-    
-    private string ParseUsing()
-    {
-        var start = _position;
-        
-        while (_position < _content.Length && 
-               (_content[_position] != '\n' && _content[_position] != '\r'))
-        {
-            _position++;
-        }
-        
-        var usingName = _content.Substring(start, _position - start).Trim();
-        
-        // Skip to end of line
-        if (_position < _content.Length && (_content[_position] == '\n' || _content[_position] == '\r'))
-        {
-            _position++;
-            if (_position < _content.Length && _content[_position] == '\r')
-                _position++;
-        }
-        
-        return usingName;
-    }
-    
+
     private TinyProperty? ParseProperty()
     {
-        if (IsEndOfContent())
-            return null;
-        
         var propertyName = ParseIdentifier();
         if (string.IsNullOrEmpty(propertyName))
+        {
             return null;
-        
-        string type = "string"; // default type
-        int mode = 0; // default mode
-        
-        // Parse type if present
+        }
+
+        var type = TinyType.String;
+        var mode = 0;
+        var typePosition = _position;
+
         if (Match(":"))
         {
-            var typeIdentifier = ParseIdentifier();
-            if (string.IsNullOrEmpty(typeIdentifier))
+            typePosition = _position;
+            var typeToken = ParseTypeToken();
+
+            if (string.IsNullOrWhiteSpace(typeToken))
             {
-                _diagnostics.Add(new TinyDiagnostic(
-                    TinyDiagnosticSeverity.Error, 
-                    "Expected type identifier after ':'", 
-                    "", 0, 0));
+                AddError(
+                    TinyDiagnosticCodes.ExpectedPropertyType,
+                    "Expected type after ':'.",
+                    typePosition);
                 return null;
             }
-            
-            // Check for primitive alias
-            var primitiveType = GetPrimitiveType(typeIdentifier);
-            if (string.IsNullOrEmpty(primitiveType))
+
+            if (!TinyType.TryParseTiny(typeToken, out type))
             {
-                // Not a primitive alias, use as-is
-                type = typeIdentifier;
-            }
-            else
-            {
-                type = primitiveType;
+                AddError(
+                    TinyDiagnosticCodes.InvalidTypeSyntax,
+                    $"Invalid Tiny.CSharp type syntax '{typeToken}'.",
+                    typePosition);
+                return null;
             }
         }
-        
-        // Parse mode if present
+
         if (Match("|"))
         {
-            while (_position < _content.Length && char.IsWhiteSpace(_content[_position]))
-            {
-                _position++;
-            }
-
+            var modePosition = _position;
             var modeStart = _position;
+
             while (_position < _content.Length && char.IsDigit(_content[_position]))
             {
                 _position++;
             }
 
-            var modeStr = _content.Substring(modeStart, _position - modeStart);
-            if (!int.TryParse(modeStr, out mode))
+            var modeToken = _content.Substring(modeStart, _position - modeStart);
+            if (!int.TryParse(modeToken, out mode))
             {
-                _diagnostics.Add(new TinyDiagnostic(
-                    TinyDiagnosticSeverity.Error, 
-                    "Expected numeric mode after '|'", 
-                    "", 0, 0));
+                AddError(
+                    TinyDiagnosticCodes.ExpectedAccessorMode,
+                    "Expected numeric accessor mode after '|'.",
+                    modePosition);
                 return null;
             }
-            
-            if (mode < 0 || mode > 2)
+
+            if (mode is < 0 or > 2)
             {
-                _diagnostics.Add(new TinyDiagnostic(
-                    TinyDiagnosticSeverity.Error, 
-                    "Mode must be 0, 1, or 2", 
-                    "", 0, 0));
+                AddError(
+                    TinyDiagnosticCodes.InvalidAccessorMode,
+                    "Accessor mode must be 0, 1, or 2.",
+                    modePosition);
                 return null;
             }
         }
-        
-        return new TinyProperty(propertyName, type, mode);
+
+        var (typeLine, typeColumn) = GetLineColumn(typePosition);
+        return new TinyProperty(
+            propertyName,
+            type,
+            mode,
+            typeLine,
+            typeColumn);
     }
-    
-    private string? GetPrimitiveType(string alias)
+
+    private string ParseTypeToken()
     {
-        return alias.ToLower() switch
+        var start = _position;
+        var genericDepth = 0;
+
+        while (_position < _content.Length)
         {
-            "s" => "string",
-            "i" => "int",
-            "l" => "long",
-            "b" => "bool",
-            "d" => "double",
-            "m" => "decimal",
-            "f" => "float",
-            "c" => "char",
-            "by" => "byte",
-            "dt" => "DateTime",
-            "g" => "Guid",
-            "o" => "object",
-            _ => null
-        };
+            var ch = _content[_position];
+
+            if (ch == '<')
+            {
+                genericDepth++;
+                _position++;
+                continue;
+            }
+
+            if (ch == '>')
+            {
+                if (genericDepth == 0)
+                {
+                    break;
+                }
+
+                genericDepth--;
+                _position++;
+                continue;
+            }
+
+            if (genericDepth == 0 &&
+                (ch == '|' || ch == ',' || char.IsWhiteSpace(ch)))
+            {
+                break;
+            }
+
+            _position++;
+        }
+
+        return _content.Substring(start, _position - start);
     }
-    
+
+    private string ParseTypeDeclarationToken()
+    {
+        var start = _position;
+
+        while (_position < _content.Length && !char.IsWhiteSpace(_content[_position]))
+        {
+            if (_content[_position] == '/' &&
+                _position + 1 < _content.Length &&
+                _content[_position + 1] == '/')
+            {
+                break;
+            }
+
+            _position++;
+        }
+
+        return _content.Substring(start, _position - start);
+    }
+
+    private string ParseIdentifier()
+    {
+        var start = _position;
+
+        if (_position >= _content.Length ||
+            !(char.IsLetter(_content[_position]) || _content[_position] == '_'))
+        {
+            AddError(
+                TinyDiagnosticCodes.ExpectedIdentifier,
+                "Expected identifier.",
+                _position);
+            return string.Empty;
+        }
+
+        _position++;
+
+        while (_position < _content.Length &&
+               (char.IsLetterOrDigit(_content[_position]) || _content[_position] == '_'))
+        {
+            _position++;
+        }
+
+        return _content.Substring(start, _position - start);
+    }
+
+    private static bool IsValidNamespaceName(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        var segments = value.Split('.');
+
+        if (segments.Length == 0)
+        {
+            return false;
+        }
+
+        foreach (var segment in segments)
+        {
+            if (string.IsNullOrWhiteSpace(segment))
+            {
+                return false;
+            }
+
+            if (segment[0] == '@')
+            {
+                var escaped = segment.Substring(1);
+
+                if (string.IsNullOrWhiteSpace(escaped) ||
+                    (!SyntaxFacts.IsValidIdentifier(escaped) &&
+                     SyntaxFacts.GetKeywordKind(escaped) == SyntaxKind.None))
+                {
+                    return false;
+                }
+
+                continue;
+            }
+
+            if (!SyntaxFacts.IsValidIdentifier(segment) ||
+                SyntaxFacts.GetKeywordKind(segment) != SyntaxKind.None)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private string ParseLineValue()
+    {
+        var start = _position;
+
+        while (_position < _content.Length &&
+               _content[_position] != '\n' &&
+               _content[_position] != '\r')
+        {
+            _position++;
+        }
+
+        var value = _content.Substring(start, _position - start).Trim();
+        var commentIndex = value.IndexOf("//", StringComparison.Ordinal);
+
+        if (commentIndex >= 0)
+        {
+            value = value.Substring(0, commentIndex).TrimEnd();
+        }
+
+        if (_position < _content.Length && _content[_position] == '\r')
+        {
+            _position++;
+        }
+
+        if (_position < _content.Length && _content[_position] == '\n')
+        {
+            _position++;
+        }
+
+        return value;
+    }
+
     private void SkipWhitespaceAndComments()
     {
         while (_position < _content.Length)
@@ -294,63 +417,88 @@ public sealed class TinyParser
                 _position++;
                 continue;
             }
-            
-            if (_content[_position] == '/' && _position + 1 < _content.Length && _content[_position + 1] == '/')
+
+            if (_content[_position] == '/' &&
+                _position + 1 < _content.Length &&
+                _content[_position + 1] == '/')
             {
-                // Skip to end of line
-                while (_position < _content.Length && _content[_position] != '\n' && _content[_position] != '\r')
+                _position += 2;
+
+                while (_position < _content.Length &&
+                       _content[_position] != '\n' &&
+                       _content[_position] != '\r')
                 {
                     _position++;
                 }
-                
-                if (_position < _content.Length && _content[_position] == '\n')
-                {
-                    _position++;
-                }
-                else if (_position < _content.Length && _content[_position] == '\r')
-                {
-                    _position++;
-                    if (_position < _content.Length && _content[_position] == '\n')
-                    {
-                        _position++;
-                    }
-                }
-                
+
                 continue;
             }
-            
-            // Not whitespace or comment, break
+
             break;
         }
     }
-    
-    private bool IsEndOfContent()
+
+    private bool Match(string token)
     {
-        return _position >= _content.Length;
+        if (_position + token.Length > _content.Length)
+        {
+            return false;
+        }
+
+        if (!_content.AsSpan(_position, token.Length).SequenceEqual(token))
+        {
+            return false;
+        }
+
+        _position += token.Length;
+        return true;
     }
+
+    private void AddError(string code, string message, int position)
+    {
+        var (line, column) = GetLineColumn(position);
+        _diagnostics.Add(new TinyDiagnostic(
+            TinyDiagnosticSeverity.Error,
+            message,
+            _sourceFilePath,
+            line,
+            column,
+            Code: code));
+    }
+
+    private (int Line, int Column) GetLineColumn(int position)
+    {
+        var line = 1;
+        var column = 1;
+        var limit = Math.Min(position, _content.Length);
+
+        for (var i = 0; i < limit; i++)
+        {
+            if (_content[i] == '\n')
+            {
+                line++;
+                column = 1;
+            }
+            else
+            {
+                column++;
+            }
+        }
+
+        return (line, column);
+    }
+
+    private bool IsEndOfContent() => _position >= _content.Length;
 }
 
-public sealed class TinySyntaxTree
+public sealed class TinySyntaxTree : TinyDocument
 {
-    public string SourceFilePath { get; set; } = "";
-    public string Namespace { get; set; } = "";
-    public string ClassName { get; set; } = "";
-    public List<TinyProperty> Properties { get; set; } = new List<TinyProperty>();
-    public List<string> Usings { get; set; } = new List<string>();
     public bool IsValid { get; set; } = true;
-    public List<TinyDiagnostic> Diagnostics { get; set; } = new List<TinyDiagnostic>();
+    public List<TinyDiagnostic> Diagnostics { get; set; } = new();
+    public Dictionary<string, TinySourceLocation> UsingLocations { get; } =
+        new(StringComparer.Ordinal);
 }
 
-public sealed class TinyProperty
-{
-    public TinyProperty(string name, string type, int mode)
-    {
-        Name = name;
-        Type = type;
-        Mode = mode;
-    }
-    
-    public string Name { get; }
-    public string Type { get; }
-    public int Mode { get; }
-}
+public sealed record TinySourceLocation(
+    int Line,
+    int Column);
