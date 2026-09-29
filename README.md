@@ -364,6 +364,16 @@ An explicit subset can be selected:
 dotnet run --project src/TinyCSharp.Compiler -- benchmark Model.cs o200k_base
 ```
 
+Benchmark all currently representable handwritten C# files in a project with:
+
+```bash
+dotnet run --project src/TinyCSharp.Compiler -- benchmark-project path/to/App.csproj
+```
+
+The project report adds benchmarked/skipped file counts, aggregate totals, median
+per-file reduction, and the worst file for each encoding. Unsupported files are
+reported as skipped instead of contaminating supported-file totals.
+
 For every encoding, the report compares Tiny.CSharp against two baselines:
 
 - **source C#** — the input file exactly as supplied, including its real formatting;
@@ -379,6 +389,19 @@ reproducible even if model-to-encoding mappings change later.
 
 See [token-efficiency benchmarking](docs/benchmarking/token-efficiency.md) for the
 project policy used when evaluating new shorthand.
+
+### Benchmark corpus baseline
+
+The versioned `samples/TinyCSharp.BenchmarkCorpus` corpus is executed in CI.
+At the current language revision it contains four supported files and produces:
+
+| Encoding | C# source | Canonical C# | Tiny | Tiny vs canonical | Median | Worst file |
+|---|---:|---:|---:|---:|---:|---|
+| `o200k_base` | 230 | 235 | 127 | 46.0% fewer | 40.9% fewer | 33.8% fewer |
+| `cl100k_base` | 232 | 237 | 130 | 45.1% fewer | 39.9% fewer | 33.3% fewer |
+
+The single `Match.cs` micro-benchmark currently measures 28 Tiny tokens versus
+73 canonical C# tokens on both encodings, a 61.6% reduction.
 
 ## Development
 
