@@ -5,6 +5,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using System.Xml.Linq;
+using TinyCSharp.Compiler.Diagnostics;
 using TinyCSharp.Compiler.Generation;
 using TinyCSharp.Compiler.Parsing;
 
@@ -28,11 +29,12 @@ public sealed class TinyProjectCompiler
         if (string.IsNullOrEmpty(projectDir))
         {
             diagnostics.Add(new TinyDiagnostic(
-                TinyDiagnosticSeverity.Error, 
-                "Could not determine project directory", 
-                projectPath, 
-                0, 
-                0));
+                TinyDiagnosticSeverity.Error,
+                "Could not determine project directory.",
+                projectPath,
+                1,
+                1,
+                Code: TinyDiagnosticCodes.ProjectDirectoryUnavailable));
             return new TinyProjectCompilationResult(false, results, diagnostics);
         }
         
@@ -54,11 +56,12 @@ public sealed class TinyProjectCompiler
             catch (Exception ex)
             {
                 diagnostics.Add(new TinyDiagnostic(
-                    TinyDiagnosticSeverity.Error, 
-                    $"Failed to compile {tcsFile}: {ex.Message}", 
-                    tcsFile, 
-                    0, 
-                    0));
+                    TinyDiagnosticSeverity.Error,
+                    $"Failed to compile {tcsFile}: {ex.Message}",
+                    tcsFile,
+                    1,
+                    1,
+                    Code: TinyDiagnosticCodes.FileCompilationFailed));
             }
         }
         
@@ -79,7 +82,7 @@ public sealed class TinyProjectCompiler
         
         // Parse the .tcs file
         var parser = new TinyParser();
-        var syntaxTree = parser.Parse(content);
+        var syntaxTree = parser.Parse(content, tcsFilePath);
         syntaxTree.SourceFilePath = tcsFilePath;
         if (string.IsNullOrWhiteSpace(syntaxTree.Namespace))
         {
@@ -126,7 +129,8 @@ public sealed class TinyProjectCompiler
                 $"The generated file '{Path.GetFileName(csFilePath)}' could not be replaced: {ex.Message}",
                 tcsFilePath,
                 1,
-                1));
+                1,
+                Code: TinyDiagnosticCodes.OutputReplacementFailed));
 
             return new TinyFileCompilationResult(tcsFilePath, false, diagnostics);
         }
@@ -150,7 +154,8 @@ public sealed class TinyProjectCompiler
                 $"Could not read project metadata from '{projectPath}': {ex.Message}",
                 projectPath,
                 1,
-                1));
+                1,
+                Code: TinyDiagnosticCodes.ProjectMetadataUnavailable));
         }
 
         return metadata;
@@ -221,7 +226,8 @@ public sealed record TinyDiagnostic(
     string FilePath,
     int Line,
     int Column,
-    IReadOnlyList<TinyDiagnostic>? RelatedInformation = null);
+    IReadOnlyList<TinyDiagnostic>? RelatedInformation = null,
+    string Code = "TCS0000");
 
 public enum TinyDiagnosticSeverity
 {
