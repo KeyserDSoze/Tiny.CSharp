@@ -691,9 +691,11 @@ public sealed class CSharpDecompiler
 
     private static bool IsNamespaceQualified(TinyType type)
     {
-        return !string.IsNullOrWhiteSpace(type.ResolvedNamespace) &&
+        var resolvedNamespace = type.ResolvedNamespace;
+
+        return !string.IsNullOrWhiteSpace(resolvedNamespace) &&
                type.Name.StartsWith(
-                   type.ResolvedNamespace + ".",
+                   resolvedNamespace + ".",
                    StringComparison.Ordinal);
     }
 
