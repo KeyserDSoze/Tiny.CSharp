@@ -1,5 +1,6 @@
 using TinyCSharp.Compiler.Compilation;
 using TinyCSharp.Compiler.Generation;
+using TinyCSharp.Compiler.Language;
 using TinyCSharp.Compiler.Parsing;
 using Xunit;
 
