@@ -18,6 +18,7 @@ public static class TinyDiagnosticCodes
     public const string InvalidUsing = "TCS2004";
     public const string InvalidNamespaceDirectiveOrder = "TCS2005";
     public const string NamespaceSegmentNormalized = "TCS2006";
+    public const string UnknownUsingNamespace = "TCS2007";
 
     public const string OutputReplacementFailed = "TCS3001";
 
