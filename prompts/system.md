@@ -36,6 +36,14 @@ u:System.Collections.Generic
 Multiple `u:` directives are allowed. Directives appear before the type
 declaration.
 
+Canonical directive rules:
+
+- `n:` may appear at most once;
+- `n:` must appear before all `u:` directives;
+- namespace/import values must be valid dotted C# identifiers;
+- duplicate `u:` directives are canonicalized to one entry;
+- explicit `u:` directives participate in type resolution.
+
 If `n:` is omitted, the compiler may infer the namespace from the .NET project and
 the source file's relative directory.
 
@@ -295,8 +303,10 @@ categories are:
 
 ```text
 TCS1xxx = Tiny.CSharp parser/syntax
+TCS2xxx = namespace/using/type resolution
 TCS3xxx = output/file replacement
 TCS4xxx = project/build
+TCS5xxx = internal compiler
 TCS6xxx = C# decompilation
 ```
 
@@ -326,6 +336,11 @@ Project conversion must use a separate output tree. Generated C# already owned b
 existing sibling `.tcs` file may participate in semantic resolution but must not be
 re-emitted as a second Tiny.CSharp source.
 
+In project mode, semantic resolution may include recursive `ProjectReference`
+compilations plus package/HintPath metadata references. Preserve assembly boundaries:
+an `internal` type from another project is not accessible merely because its source
+is available.
+
 
 ## Tiny.CSharp compiler type resolution
 
@@ -336,19 +351,32 @@ Current deterministic priority:
 
 ```text
 1. same generated namespace
-2. explicitly imported namespace
+2. namespace selected by explicit u:
 3. current-project Tiny.CSharp declaration
 4. current-project handwritten C# declaration
-5. framework type
-6. namespace / qualified name / assembly identity ordinal ordering
+5. direct ProjectReference
+6. transitive ProjectReference
+7. direct external/package assembly
+8. transitive external/package assembly
+9. framework type
+10. namespace / qualified name / assembly identity ordinal ordering
 ```
+
+Project references are followed recursively. Package compile assets come from the
+restored `project.assets.json`; explicit `Reference/HintPath` assemblies are also
+eligible. Never invent filesystem assembly scans.
+
+Same-namespace candidates and explicitly imported namespaces narrow the binding set
+before source priority is applied. If one explicit `u:` identifies one candidate,
+that resolves the ambiguity and `TCS2001` must not be emitted.
 
 If exactly one candidate is selected from another namespace, add the required
 `u:`/C# using automatically unless automatic using generation is disabled.
 
-If multiple accessible candidates exist, preserve warning `TCS2001`, choose the
-deterministic highest-priority candidate, and use a fully qualified generated C#
-type so the generated source is not ambiguous.
+If the effective binding set still contains multiple accessible candidates,
+preserve warning `TCS2001`, choose the deterministic highest-priority candidate,
+and use a fully qualified generated C# type so the generated source is not
+ambiguous.
 
 If no candidate exists, preserve warning `TCS2002`, keep the original type name
 unchanged, and allow the normal C# compiler to perform final validation.
