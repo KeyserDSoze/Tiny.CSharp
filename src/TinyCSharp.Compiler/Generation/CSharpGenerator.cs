@@ -24,7 +24,7 @@ public sealed class CSharpGenerator
         var usingDirectives = new HashSet<string>(syntaxTree.Usings);
         
         // Add System for DateTime, Guid, etc.
-        if (syntaxTree.Properties.Any(p => p.Type == "DateTime" || p.Type == "Guid"))
+        if (syntaxTree.Properties.Any(p => p.Type.ContainsName("DateTime") || p.Type.ContainsName("Guid")))
         {
             usingDirectives.Add("System");
         }
@@ -61,8 +61,8 @@ public sealed class CSharpGenerator
         // Add properties
         foreach (var property in syntaxTree.Properties)
         {
-            var declaration = $"    public {property.Type} {property.Name} {{ get; {GetSetter(property.Mode)} }}";
-            if (property.Type == "string" && property.Mode == 0)
+            var declaration = $"    public {property.Type.ToCSharp()} {property.Name} {{ get; {GetSetter(property.Mode)} }}";
+            if (property.Type.IsDefaultString && property.Mode == 0)
             {
                 declaration += " = string.Empty;";
             }
