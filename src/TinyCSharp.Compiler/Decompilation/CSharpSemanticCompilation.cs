@@ -58,6 +58,8 @@ public sealed class CSharpSemanticCompilation
         return new CSharpSemanticCompilation(compilation, trees);
     }
 
+    internal CSharpCompilation Compilation => _compilation;
+
     public SyntaxTree GetSyntaxTree(string filePath)
     {
         if (!_trees.TryGetValue(filePath, out var tree))
