@@ -1,6 +1,7 @@
 using Microsoft.ML.Tokenizers;
 using TinyCSharp.Compiler.Decompilation;
 using TinyCSharp.Compiler.Generation;
+using TinyCSharp.Compiler.Language;
 
 namespace TinyCSharp.Compiler.Benchmarking;
 
@@ -36,46 +37,38 @@ public sealed class TinyTokenBenchmark
                 decompiled.Diagnostics);
         }
 
-        var tinySource = new TinyFormatter().Format(
-            decompiled.Document);
-        var canonicalCSharp = new CSharpGenerator().Generate(
+        return BenchmarkDocument(
+            csharpSource,
             decompiled.Document,
+            encodings);
+    }
+
+    public TinyTokenBenchmarkResult BenchmarkDocument(
+        string csharpSource,
+        TinyDocument document,
+        IEnumerable<string>? encodings = null)
+    {
+        var tinySource = new TinyFormatter().Format(document);
+        var canonicalCSharp = new CSharpGenerator().Generate(
+            document,
             includeGeneratedHeader: false);
-
-        var selectedEncodings = (encodings ?? DefaultEncodings)
-            .Where(encoding =>
-                !string.IsNullOrWhiteSpace(encoding))
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToArray();
-
-        if (selectedEncodings.Length == 0)
-        {
-            selectedEncodings = DefaultEncodings.ToArray();
-        }
-
+        var selectedEncodings = NormalizeEncodings(encodings);
         var results = new List<TinyTokenEncodingResult>();
 
         foreach (var encoding in selectedEncodings)
         {
             var tokenizer = GetTokenizer(encoding);
-            var sourceTokens = tokenizer.CountTokens(
-                csharpSource);
-            var canonicalTokens = tokenizer.CountTokens(
-                canonicalCSharp);
-            var tinyTokens = tokenizer.CountTokens(
-                tinySource);
+            var sourceTokens = tokenizer.CountTokens(csharpSource);
+            var canonicalTokens = tokenizer.CountTokens(canonicalCSharp);
+            var tinyTokens = tokenizer.CountTokens(tinySource);
 
             results.Add(new TinyTokenEncodingResult(
                 encoding,
                 sourceTokens,
                 canonicalTokens,
                 tinyTokens,
-                CalculateReduction(
-                    sourceTokens,
-                    tinyTokens),
-                CalculateReduction(
-                    canonicalTokens,
-                    tinyTokens)));
+                CalculateReduction(sourceTokens, tinyTokens),
+                CalculateReduction(canonicalTokens, tinyTokens)));
         }
 
         return new TinyTokenBenchmarkResult(
@@ -85,6 +78,19 @@ public sealed class TinyTokenBenchmark
             tinySource,
             results,
             Array.Empty<TinyDecompilationDiagnostic>());
+    }
+
+    public static IReadOnlyList<string> NormalizeEncodings(
+        IEnumerable<string>? encodings)
+    {
+        var selected = (encodings ?? DefaultEncodings)
+            .Where(encoding => !string.IsNullOrWhiteSpace(encoding))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        return selected.Length == 0
+            ? DefaultEncodings.ToArray()
+            : selected;
     }
 
     private Tokenizer GetTokenizer(string encoding)
