@@ -2,13 +2,12 @@ using System;
 using System.Collections.Generic;
 using System.Text;
 using TinyCSharp.Compiler.Language;
-using TinyCSharp.Compiler.Parsing;
 
 namespace TinyCSharp.Compiler.Generation;
 
 public sealed class CSharpGenerator
 {
-    public string Generate(TinySyntaxTree syntaxTree)
+    public string Generate(TinyDocument syntaxTree)
     {
         var sb = new StringBuilder();
         
