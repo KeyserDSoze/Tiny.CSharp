@@ -51,7 +51,7 @@ public sealed class CSharpSemanticCompilation
 
         var references = PlatformReferences.Value
             .Concat(additionalReferences ?? Array.Empty<MetadataReference>())
-            .GroupBy(reference => reference.Display ?? string.Empty, StringComparer.OrdinalIgnoreCase)
+            .GroupBy(GetReferenceKey, StringComparer.OrdinalIgnoreCase)
             .Select(group => group.First())
             .ToArray();
 
@@ -82,6 +82,27 @@ public sealed class CSharpSemanticCompilation
     public SemanticModel GetSemanticModel(string filePath)
     {
         return _compilation.GetSemanticModel(GetSyntaxTree(filePath), ignoreAccessibility: true);
+    }
+
+    private static string GetReferenceKey(
+        MetadataReference reference)
+    {
+        return reference switch
+        {
+            CompilationReference compilationReference =>
+                "compilation:" +
+                (compilationReference.Compilation.AssemblyName ??
+                 compilationReference.GetHashCode().ToString()),
+            PortableExecutableReference portableReference =>
+                "file:" +
+                (portableReference.FilePath ??
+                 portableReference.Display ??
+                 portableReference.GetHashCode().ToString()),
+            _ =>
+                reference.GetType().FullName + ":" +
+                (reference.Display ??
+                 reference.GetHashCode().ToString())
+        };
     }
 
     private static IReadOnlyList<MetadataReference> CreatePlatformReferences()
