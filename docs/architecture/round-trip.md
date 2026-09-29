@@ -68,11 +68,25 @@ Therefore C# -> Tiny.CSharp accepts a `string` get/set property only when its
 initializer is semantically the supported empty-string default (`string.Empty`
 or `""`). This avoids changing initialization behavior during round trips.
 
+## Semantic compilation
+
+C# decompilation can now operate over a reusable Roslyn compilation containing
+multiple source files. This resolves project-local type names, allows imports to be
+canonicalized from actual symbols, and detects ambiguous type bindings.
+
+Single-file mode remains conservative: if an application type cannot be resolved
+from platform references alone, the source spelling and imports are preserved.
+
+Project mode discovers C# files outside `bin/` and `obj/`, includes generated
+Tiny.CSharp-owned C# in the semantic compilation, but emits only handwritten
+supported files into a separate output directory.
+
 ## Next architectural step
 
-The next major expansion should use Roslyn semantic information to resolve named
-types and then extend the canonical model for richer type syntax. Syntax should be
-added to the language contract before either converter starts emitting it.
+The semantic compilation currently includes source files plus trusted platform
+assemblies. The next resolution layer should load project references and NuGet
+assemblies from the project build graph, followed by namespace/import validation
+against that complete symbol universe.
 
 
 ## Stable diagnostics
