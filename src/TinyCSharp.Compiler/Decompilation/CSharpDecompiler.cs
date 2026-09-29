@@ -1,6 +1,7 @@
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
+using TinyCSharp.Compiler.Diagnostics;
 using TinyCSharp.Compiler.Language;
 
 namespace TinyCSharp.Compiler.Decompilation;
@@ -16,6 +17,7 @@ public sealed class CSharpDecompiler
         {
             var span = diagnostic.Location.GetLineSpan();
             diagnostics.Add(new TinyDecompilationDiagnostic(
+                TinyDiagnosticCodes.InvalidCSharpSyntax,
                 diagnostic.GetMessage(),
                 span.StartLinePosition.Line + 1,
                 span.StartLinePosition.Character + 1));
@@ -39,7 +41,8 @@ public sealed class CSharpDecompiler
 
         IReadOnlyList<MemberDeclarationSyntax> members = root.Members;
 
-        if (root.Members.Count == 1 && root.Members[0] is BaseNamespaceDeclarationSyntax namespaceDeclaration)
+        if (root.Members.Count == 1 &&
+            root.Members[0] is BaseNamespaceDeclarationSyntax namespaceDeclaration)
         {
             document.Namespace = namespaceDeclaration.Name.ToString();
 
@@ -52,7 +55,7 @@ public sealed class CSharpDecompiler
         }
         else if (root.Members.OfType<BaseNamespaceDeclarationSyntax>().Any())
         {
-            AddDiagnostic(
+            AddUnsupported(
                 diagnostics,
                 root,
                 "The current Tiny.CSharp profile supports at most one namespace containing one class.");
@@ -61,7 +64,7 @@ public sealed class CSharpDecompiler
 
         if (members.Count != 1 || members[0] is not ClassDeclarationSyntax classDeclaration)
         {
-            AddDiagnostic(
+            AddUnsupported(
                 diagnostics,
                 root,
                 "The current Tiny.CSharp profile requires exactly one top-level class.");
@@ -88,7 +91,7 @@ public sealed class CSharpDecompiler
                 directive.GlobalKeyword != default ||
                 directive.Name is null)
             {
-                AddDiagnostic(
+                AddUnsupported(
                     diagnostics,
                     directive,
                     "Using aliases, global using directives, and static using directives are not supported.");
@@ -111,7 +114,7 @@ public sealed class CSharpDecompiler
             classDeclaration.BaseList is not null ||
             classDeclaration.ConstraintClauses.Count > 0)
         {
-            AddDiagnostic(
+            AddUnsupported(
                 diagnostics,
                 classDeclaration,
                 "Attributes, generic parameters, base types, interfaces, and generic constraints are not supported yet.");
@@ -124,7 +127,7 @@ public sealed class CSharpDecompiler
 
         if (isPublic && isInternal)
         {
-            AddDiagnostic(diagnostics, classDeclaration, "A class cannot be both public and internal.");
+            AddUnsupported(diagnostics, classDeclaration, "A class cannot be both public and internal.");
             return false;
         }
 
@@ -134,7 +137,7 @@ public sealed class CSharpDecompiler
                 !modifier.IsKind(SyntaxKind.InternalKeyword) &&
                 !modifier.IsKind(SyntaxKind.SealedKeyword))
             {
-                AddDiagnostic(
+                AddUnsupported(
                     diagnostics,
                     modifier,
                     $"Class modifier '{modifier.Text}' is not supported by the current Tiny.CSharp profile.");
@@ -152,7 +155,7 @@ public sealed class CSharpDecompiler
         {
             if (member is not PropertyDeclarationSyntax propertyDeclaration)
             {
-                AddDiagnostic(
+                AddUnsupported(
                     diagnostics,
                     member,
                     $"Member kind '{member.Kind()}' is not supported by the current Tiny.CSharp profile.");
@@ -181,50 +184,56 @@ public sealed class CSharpDecompiler
             declaration.ExplicitInterfaceSpecifier is not null ||
             declaration.ExpressionBody is not null)
         {
-            AddDiagnostic(
+            AddUnsupported(
                 diagnostics,
                 declaration,
                 "Attributed, explicit-interface, and expression-bodied properties are not supported yet.");
             return false;
         }
 
-        if (declaration.Modifiers.Count != 1 || !declaration.Modifiers[0].IsKind(SyntaxKind.PublicKeyword))
+        if (declaration.Modifiers.Count != 1 ||
+            !declaration.Modifiers[0].IsKind(SyntaxKind.PublicKeyword))
         {
-            AddDiagnostic(
+            AddUnsupported(
                 diagnostics,
                 declaration,
                 "The current Tiny.CSharp property profile supports public instance properties only.");
             return false;
         }
 
-        if (!TryReadType(declaration.Type, out var typeName))
+        if (!TryReadType(declaration.Type, out var type))
         {
-            AddDiagnostic(
+            AddUnsupported(
                 diagnostics,
                 declaration.Type,
-                $"Property type '{declaration.Type}' is not supported yet. Use a primitive alias type or a simple named type.");
+                $"Property type '{declaration.Type}' is not representable by the current Tiny.CSharp type grammar.");
             return false;
         }
 
         if (declaration.AccessorList is null ||
             declaration.AccessorList.Accessors.Count != 2)
         {
-            AddDiagnostic(
+            AddUnsupported(
                 diagnostics,
                 declaration,
                 "Properties must use one of: get/set, get/init, or get/private set.");
             return false;
         }
 
-        var getter = declaration.AccessorList.Accessors.SingleOrDefault(a => a.IsKind(SyntaxKind.GetAccessorDeclaration));
+        var getter = declaration.AccessorList.Accessors.SingleOrDefault(
+            accessor => accessor.IsKind(SyntaxKind.GetAccessorDeclaration));
         var setter = declaration.AccessorList.Accessors.SingleOrDefault(
-            a => a.IsKind(SyntaxKind.SetAccessorDeclaration) || a.IsKind(SyntaxKind.InitAccessorDeclaration));
+            accessor => accessor.IsKind(SyntaxKind.SetAccessorDeclaration) ||
+                        accessor.IsKind(SyntaxKind.InitAccessorDeclaration));
 
         if (getter is null || setter is null ||
-            getter.Body is not null || getter.ExpressionBody is not null || getter.Modifiers.Count != 0 ||
-            setter.Body is not null || setter.ExpressionBody is not null)
+            getter.Body is not null ||
+            getter.ExpressionBody is not null ||
+            getter.Modifiers.Count != 0 ||
+            setter.Body is not null ||
+            setter.ExpressionBody is not null)
         {
-            AddDiagnostic(
+            AddUnsupported(
                 diagnostics,
                 declaration,
                 "Only auto-properties with supported accessor modes can be represented.");
@@ -249,53 +258,104 @@ public sealed class CSharpDecompiler
         }
         else
         {
-            AddDiagnostic(
+            AddUnsupported(
                 diagnostics,
                 setter,
                 "Only set, init, and private set accessors are supported.");
             return false;
         }
 
-        if (!ValidateInitializer(declaration, typeName, mode, diagnostics))
+        if (!ValidateInitializer(declaration, type, mode, diagnostics))
         {
             return false;
         }
 
-        property = new TinyProperty(declaration.Identifier.ValueText, typeName, mode);
+        property = new TinyProperty(declaration.Identifier.ValueText, type, mode);
         return true;
     }
 
-    private static bool TryReadType(TypeSyntax typeSyntax, out string typeName)
+    private static bool TryReadType(TypeSyntax syntax, out TinyType type)
     {
-        typeName = string.Empty;
+        type = TinyType.String;
 
-        if (typeSyntax is PredefinedTypeSyntax predefined)
+        switch (syntax)
         {
-            typeName = predefined.Keyword.ValueText;
-            return TinyLanguage.GetCanonicalTypeToken(typeName) != typeName ||
-                   string.Equals(typeName, "string", StringComparison.Ordinal);
-        }
+            case PredefinedTypeSyntax predefined:
+            {
+                var name = predefined.Keyword.ValueText;
+                if (!TinyLanguage.TryExpandTypeAlias(
+                        TinyLanguage.GetCanonicalTypeToken(name),
+                        out var expanded) ||
+                    !string.Equals(expanded, name, StringComparison.Ordinal))
+                {
+                    return false;
+                }
 
-        if (typeSyntax is IdentifierNameSyntax identifier)
-        {
-            typeName = identifier.Identifier.ValueText;
-            return true;
-        }
+                type = new TinyType(name, Array.Empty<TinyType>());
+                return true;
+            }
 
-        return false;
+            case IdentifierNameSyntax identifier:
+                type = new TinyType(identifier.Identifier.ValueText, Array.Empty<TinyType>());
+                return true;
+
+            case GenericNameSyntax generic:
+            {
+                var arguments = new List<TinyType>();
+
+                foreach (var argumentSyntax in generic.TypeArgumentList.Arguments)
+                {
+                    if (!TryReadType(argumentSyntax, out var argument))
+                    {
+                        return false;
+                    }
+
+                    arguments.Add(argument);
+                }
+
+                type = new TinyType(generic.Identifier.ValueText, arguments);
+                return true;
+            }
+
+            case NullableTypeSyntax nullable:
+                if (!TryReadType(nullable.ElementType, out var nullableElement))
+                {
+                    return false;
+                }
+
+                type = nullableElement with { IsNullable = true };
+                return true;
+
+            case ArrayTypeSyntax array:
+                if (!TryReadType(array.ElementType, out var element))
+                {
+                    return false;
+                }
+
+                if (array.RankSpecifiers.Any(rank => rank.Rank != 1))
+                {
+                    return false;
+                }
+
+                type = element with { ArrayDepth = element.ArrayDepth + array.RankSpecifiers.Count };
+                return true;
+
+            default:
+                return false;
+        }
     }
 
     private static bool ValidateInitializer(
         PropertyDeclarationSyntax declaration,
-        string typeName,
+        TinyType type,
         int mode,
         List<TinyDecompilationDiagnostic> diagnostics)
     {
-        if (!string.Equals(typeName, "string", StringComparison.Ordinal))
+        if (!type.IsDefaultString)
         {
             if (declaration.Initializer is not null)
             {
-                AddDiagnostic(
+                AddUnsupported(
                     diagnostics,
                     declaration.Initializer,
                     "Property initializers are not representable by the current Tiny.CSharp profile.");
@@ -309,7 +369,7 @@ public sealed class CSharpDecompiler
         {
             if (declaration.Initializer is not null)
             {
-                AddDiagnostic(
+                AddUnsupported(
                     diagnostics,
                     declaration.Initializer,
                     "String properties using init or private set cannot currently preserve an initializer.");
@@ -319,9 +379,10 @@ public sealed class CSharpDecompiler
             return true;
         }
 
-        if (declaration.Initializer is null || !IsEmptyStringInitializer(declaration.Initializer.Value))
+        if (declaration.Initializer is null ||
+            !IsEmptyStringInitializer(declaration.Initializer.Value))
         {
-            AddDiagnostic(
+            AddUnsupported(
                 diagnostics,
                 declaration,
                 "A string get/set property must initialize to string.Empty or an empty string for safe Tiny.CSharp round-trip.");
@@ -346,13 +407,14 @@ public sealed class CSharpDecompiler
                memberAccess.Name.Identifier.ValueText == "Empty";
     }
 
-    private static void AddDiagnostic(
+    private static void AddUnsupported(
         List<TinyDecompilationDiagnostic> diagnostics,
         SyntaxNodeOrToken node,
         string message)
     {
         var span = node.GetLocation().GetLineSpan();
         diagnostics.Add(new TinyDecompilationDiagnostic(
+            TinyDiagnosticCodes.UnsupportedCSharpConstruct,
             message,
             span.StartLinePosition.Line + 1,
             span.StartLinePosition.Character + 1));
@@ -360,6 +422,7 @@ public sealed class CSharpDecompiler
 }
 
 public sealed record TinyDecompilationDiagnostic(
+    string Code,
     string Message,
     int Line,
     int Column);
