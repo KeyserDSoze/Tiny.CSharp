@@ -78,6 +78,141 @@ public class User
     }
 
     [Fact]
+    public async Task BenchmarkProject_AggregatesCorpusAndDistribution()
+    {
+        var root = Path.Combine(
+            Path.GetTempPath(),
+            "tinycs-benchmark-project-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+
+        try
+        {
+            var projectPath = Path.Combine(root, "Corpus.csproj");
+            await File.WriteAllTextAsync(
+                projectPath,
+                "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup></Project>");
+
+            await File.WriteAllTextAsync(
+                Path.Combine(root, "User.cs"),
+                """
+namespace Corpus;
+
+public class User
+{
+    public string Name { get; set; } = string.Empty;
+    public int Age { get; set; }
+}
+""");
+
+            await File.WriteAllTextAsync(
+                Path.Combine(root, "Match.cs"),
+                """
+namespace Corpus;
+
+public sealed class Match
+{
+    public string Identifier { get; set; } = string.Empty;
+    public int Score { get; init; }
+    public int Code { get; private set; }
+}
+""");
+
+            var result = await new TinyProjectTokenBenchmark().BenchmarkAsync(
+                projectPath);
+
+            Assert.True(result.Success);
+            Assert.True(result.Complete);
+            Assert.Equal(2, result.Files.Count);
+            Assert.Empty(result.SkippedSourceFiles);
+            Assert.Equal(2, result.Encodings.Count);
+            Assert.True(result.SourceCharacters > result.TinyCharacters);
+            Assert.True(result.CanonicalCSharpCharacters > result.TinyCharacters);
+
+            foreach (var encoding in result.Encodings)
+            {
+                Assert.True(
+                    encoding.TinyTokens <
+                    encoding.CanonicalCSharpTokens);
+                Assert.True(
+                    encoding.ReductionVsCanonicalPercent > 0);
+                Assert.True(
+                    encoding.MedianReductionVsCanonicalPercent > 0);
+                Assert.True(
+                    encoding.WorstReductionVsCanonicalPercent > 0);
+                Assert.False(
+                    string.IsNullOrWhiteSpace(encoding.WorstFile));
+            }
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task BenchmarkProject_SkipsUnsupportedFilesButKeepsSupportedCorpus()
+    {
+        var root = Path.Combine(
+            Path.GetTempPath(),
+            "tinycs-benchmark-skipped-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+
+        try
+        {
+            var projectPath = Path.Combine(root, "Corpus.csproj");
+            await File.WriteAllTextAsync(
+                projectPath,
+                "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup></Project>");
+
+            await File.WriteAllTextAsync(
+                Path.Combine(root, "Supported.cs"),
+                """
+public class Supported
+{
+    public string Name { get; set; } = string.Empty;
+    public int Value { get; set; }
+}
+""");
+
+            await File.WriteAllTextAsync(
+                Path.Combine(root, "Unsupported.cs"),
+                """
+public class Unsupported
+{
+    public void Save() { }
+}
+""");
+
+            var result = await new TinyProjectTokenBenchmark().BenchmarkAsync(
+                projectPath,
+                new[] { "o200k_base" });
+
+            Assert.True(result.Success);
+            Assert.False(result.Complete);
+            Assert.Single(result.Files);
+            Assert.Single(result.Encodings);
+            Assert.Single(result.SkippedSourceFiles);
+            Assert.EndsWith(
+                "Unsupported.cs",
+                result.SkippedSourceFiles[0],
+                StringComparison.OrdinalIgnoreCase);
+            Assert.Contains(
+                result.Diagnostics,
+                diagnostic => diagnostic.Code == "TCS6002");
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
     public void Benchmark_UnsupportedCSharp_ReturnsDecompilerDiagnostics()
     {
         const string source = """
