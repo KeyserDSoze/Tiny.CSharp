@@ -89,7 +89,7 @@ public sealed class TinyParser
         {
             AddError(
                 TinyDiagnosticCodes.UnsupportedTypeDeclaration,
-                $"Unsupported type declaration '{declarationToken}'. Expected pc, psc, ic, or isc.",
+                $"Unsupported or non-canonical type declaration '{declarationToken}'.",
                 declarationPosition);
             return Invalid(syntaxTree);
         }
