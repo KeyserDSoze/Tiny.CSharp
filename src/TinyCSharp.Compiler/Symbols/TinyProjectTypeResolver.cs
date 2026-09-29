@@ -184,12 +184,18 @@ public sealed class TinyProjectTypeResolver
             {
                 if (!knownNamespaces.Contains(usingNamespace))
                 {
+                    var location = document.UsingLocations.TryGetValue(
+                        usingNamespace,
+                        out var usingLocation)
+                        ? usingLocation
+                        : new TinySourceLocation(1, 1);
+
                     diagnostics.Add(new TinyDiagnostic(
                         TinyDiagnosticSeverity.Error,
                         $"Using namespace '{usingNamespace}' could not be resolved in the project symbol universe.",
                         document.SourceFilePath,
-                        1,
-                        1,
+                        location.Line,
+                        location.Column,
                         Code: TinyDiagnosticCodes.UnknownUsingNamespace));
                 }
             }
