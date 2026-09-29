@@ -7,6 +7,24 @@ namespace TinyCSharp.Compiler.Tests;
 
 public sealed class CompilerTests
 {
+    [Theory]
+    [InlineData("pc", "public class")]
+    [InlineData("psc", "public sealed class")]
+    [InlineData("ic", "internal class")]
+    [InlineData("isc", "internal sealed class")]
+    public void Parse_CompactTypeDeclaration_IsCanonical(string token, string expectedDeclaration)
+    {
+        var parser = new TinyParser();
+        var tree = parser.Parse($"{token} Match => Id");
+
+        Assert.True(tree.IsValid);
+        Assert.Equal(token, tree.TypeDeclaration.ToToken());
+
+        var generator = new CSharpGenerator();
+        var output = generator.Generate(tree);
+        Assert.Contains($"{expectedDeclaration} Match", output);
+    }
+
     [Fact]
     public void Parse_PscDeclaration_WithAliasesAndModes()
     {
