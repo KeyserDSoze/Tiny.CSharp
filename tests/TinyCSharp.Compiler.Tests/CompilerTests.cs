@@ -35,10 +35,10 @@ public sealed class CompilerTests
         Assert.True(tree.IsValid);
         Assert.Equal("Match", tree.ClassName);
         Assert.Equal(5, tree.Properties.Count);
-        Assert.Equal("string", tree.Properties[0].Type);
+        Assert.Equal("string", tree.Properties[0].Type.ToCSharp());
         Assert.Equal(0, tree.Properties[0].Mode);
-        Assert.Equal("int", tree.Properties[2].Type);
-        Assert.Equal("DateTime", tree.Properties[3].Type);
+        Assert.Equal("int", tree.Properties[2].Type.ToCSharp());
+        Assert.Equal("DateTime", tree.Properties[3].Type.ToCSharp());
         Assert.Equal(1, tree.Properties[3].Mode);
         Assert.Equal(2, tree.Properties[4].Mode);
     }
@@ -52,7 +52,7 @@ public sealed class CompilerTests
         Assert.True(tree.IsValid);
         Assert.Equal("MyCompany.Domain", tree.Namespace);
         Assert.Equal(new[] { "System.Collections.Generic", "MyCompany.Contracts" }, tree.Usings);
-        Assert.Equal("MatchResult", tree.Properties[0].Type);
+        Assert.Equal("MatchResult", tree.Properties[0].Type.ToCSharp());
     }
 
     [Fact]
@@ -81,6 +81,44 @@ public sealed class CompilerTests
         Assert.Contains("public string Id { get; set; } = string.Empty;", output);
         Assert.Contains("public int Number { get; init; }", output);
         Assert.Contains("public int Code { get; private set; }", output);
+    }
+
+    [Fact]
+    public void Parse_CompositionalTypes_ExpandsAliasesRecursively()
+    {
+        var parser = new TinyParser();
+        var tree = parser.Parse(
+            "psc Types => Maybe:s?,Ids:g[],Names:List<s>,Map:Dictionary<s,List<i>>,Work:Task<Result>|1");
+
+        Assert.True(tree.IsValid);
+        Assert.Equal("string?", tree.Properties[0].Type.ToCSharp());
+        Assert.Equal("Guid[]", tree.Properties[1].Type.ToCSharp());
+        Assert.Equal("List<string>", tree.Properties[2].Type.ToCSharp());
+        Assert.Equal("Dictionary<string,List<int>>", tree.Properties[3].Type.ToCSharp());
+        Assert.Equal("Task<Result>", tree.Properties[4].Type.ToCSharp());
+
+        var output = new CSharpGenerator().Generate(tree);
+        Assert.Contains("using System;", output);
+        Assert.Contains("public string? Maybe { get; set; }", output);
+        Assert.Contains("public Guid[] Ids { get; set; }", output);
+        Assert.Contains("public Dictionary<string,List<int>> Map { get; set; }", output);
+        Assert.DoesNotContain("Maybe { get; set; } = string.Empty;", output);
+    }
+
+    [Fact]
+    public void Parse_InvalidType_ReportsStableCodeAndLocation()
+    {
+        var parser = new TinyParser();
+        var tree = parser.Parse(
+            "n:Example\npsc User => Name,List:List<s",
+            "User.tcs");
+
+        Assert.False(tree.IsValid);
+        var diagnostic = Assert.Single(tree.Diagnostics);
+        Assert.Equal("TCS1008", diagnostic.Code);
+        Assert.Equal("User.tcs", diagnostic.FilePath);
+        Assert.Equal(2, diagnostic.Line);
+        Assert.True(diagnostic.Column > 1);
     }
 
     [Fact]
