@@ -124,6 +124,56 @@ public sealed class CompilerTests
     }
 
     [Fact]
+    public void Parse_InvalidNamespace_ReportsTcs2003()
+    {
+        var tree = new TinyParser().Parse(
+            "n:Example.Bad-Name\npc Model => Id",
+            "Model.tcs");
+
+        Assert.False(tree.IsValid);
+        var diagnostic = Assert.Single(tree.Diagnostics);
+        Assert.Equal("TCS2003", diagnostic.Code);
+        Assert.Equal(1, diagnostic.Line);
+        Assert.True(diagnostic.Column > 1);
+    }
+
+    [Fact]
+    public void Parse_InvalidUsing_ReportsTcs2004()
+    {
+        var tree = new TinyParser().Parse(
+            "u:System.Collections.Generic<>\npc Model => Id",
+            "Model.tcs");
+
+        Assert.False(tree.IsValid);
+        var diagnostic = Assert.Single(tree.Diagnostics);
+        Assert.Equal("TCS2004", diagnostic.Code);
+    }
+
+    [Fact]
+    public void Parse_NamespaceAfterUsing_ReportsTcs2005()
+    {
+        var tree = new TinyParser().Parse(
+            "u:System\nn:Example\npc Model => Id",
+            "Model.tcs");
+
+        Assert.False(tree.IsValid);
+        var diagnostic = Assert.Single(tree.Diagnostics);
+        Assert.Equal("TCS2005", diagnostic.Code);
+        Assert.Equal(2, diagnostic.Line);
+    }
+
+    [Fact]
+    public void Parse_DuplicateUsings_AreCanonicalized()
+    {
+        var tree = new TinyParser().Parse(
+            "u:System.Collections.Generic\nu:System.Collections.Generic\npc Model => Values:List<i>");
+
+        Assert.True(tree.IsValid);
+        Assert.Single(tree.Usings);
+        Assert.Equal("System.Collections.Generic", tree.Usings[0]);
+    }
+
+    [Fact]
     public async Task CompileAsync_ResolvesTypeFromAnotherTinyFile_AndAddsUsing()
     {
         var root = Path.Combine(
@@ -239,6 +289,59 @@ public sealed class CompilerTests
             var output = await File.ReadAllTextAsync(
                 Path.Combine(root, "Model.cs"));
             Assert.Contains("public MissingType Value { get; set; }", output);
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task CompileAsync_ExplicitUsing_ResolvesAmbiguityWithoutWarning()
+    {
+        var root = Path.Combine(
+            Path.GetTempPath(),
+            "tinycs-explicit-using-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(Path.Combine(root, "A"));
+        Directory.CreateDirectory(Path.Combine(root, "B"));
+        Directory.CreateDirectory(Path.Combine(root, "Models"));
+
+        try
+        {
+            var projectPath = Path.Combine(root, "Example.csproj");
+            await File.WriteAllTextAsync(
+                projectPath,
+                "<Project><PropertyGroup><TargetFramework>net10.0</TargetFramework><RootNamespace>Example</RootNamespace></PropertyGroup></Project>");
+            await File.WriteAllTextAsync(
+                Path.Combine(root, "A", "Team.tcs"),
+                "pc Team => Id");
+            await File.WriteAllTextAsync(
+                Path.Combine(root, "B", "Team.tcs"),
+                "pc Team => Id");
+            await File.WriteAllTextAsync(
+                Path.Combine(root, "Models", "Match.tcs"),
+                "u:Example.B\npc Match => HomeTeam:Team");
+
+            var result = await new TinyProjectCompiler().CompileAsync(projectPath);
+
+            Assert.True(result.Success);
+            Assert.DoesNotContain(
+                result.Diagnostics,
+                diagnostic => diagnostic.Code == "TCS2001");
+
+            var output = await File.ReadAllTextAsync(
+                Path.Combine(root, "Models", "Match.cs"));
+
+            Assert.Contains("using Example.B;", output);
+            Assert.Contains(
+                "public Team HomeTeam { get; set; }",
+                output);
+            Assert.DoesNotContain(
+                "public Example.A.Team HomeTeam",
+                output);
         }
         finally
         {
