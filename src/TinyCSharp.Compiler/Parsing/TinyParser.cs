@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Text;
 using TinyCSharp.Compiler.Compilation;
 using TinyCSharp.Compiler.Language;
 
@@ -245,17 +244,9 @@ public sealed class TinyParser
                 return null;
             }
             
-            // Check for primitive alias
-            var primitiveType = GetPrimitiveType(typeIdentifier);
-            if (string.IsNullOrEmpty(primitiveType))
-            {
-                // Not a primitive alias, use as-is
-                type = typeIdentifier;
-            }
-            else
-            {
-                type = primitiveType;
-            }
+            type = TinyLanguage.TryExpandTypeAlias(typeIdentifier, out var primitiveType)
+                ? primitiveType
+                : typeIdentifier;
         }
         
         // Parse mode if present
@@ -293,26 +284,6 @@ public sealed class TinyParser
         }
         
         return new TinyProperty(propertyName, type, mode);
-    }
-    
-    private string? GetPrimitiveType(string alias)
-    {
-        return alias.ToLower() switch
-        {
-            "s" => "string",
-            "i" => "int",
-            "l" => "long",
-            "b" => "bool",
-            "d" => "double",
-            "m" => "decimal",
-            "f" => "float",
-            "c" => "char",
-            "by" => "byte",
-            "dt" => "DateTime",
-            "g" => "Guid",
-            "o" => "object",
-            _ => null
-        };
     }
     
     private void SkipWhitespaceAndComments()
@@ -360,28 +331,8 @@ public sealed class TinyParser
     }
 }
 
-public sealed class TinySyntaxTree
+public sealed class TinySyntaxTree : TinyDocument
 {
-    public string SourceFilePath { get; set; } = "";
-    public string Namespace { get; set; } = "";
-    public TinyTypeDeclaration TypeDeclaration { get; set; } = TinyTypeDeclaration.PublicSealedClass;
-    public string ClassName { get; set; } = "";
-    public List<TinyProperty> Properties { get; set; } = new List<TinyProperty>();
-    public List<string> Usings { get; set; } = new List<string>();
     public bool IsValid { get; set; } = true;
-    public List<TinyDiagnostic> Diagnostics { get; set; } = new List<TinyDiagnostic>();
-}
-
-public sealed class TinyProperty
-{
-    public TinyProperty(string name, string type, int mode)
-    {
-        Name = name;
-        Type = type;
-        Mode = mode;
-    }
-    
-    public string Name { get; }
-    public string Type { get; }
-    public int Mode { get; }
+    public List<TinyDiagnostic> Diagnostics { get; set; } = new();
 }
