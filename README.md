@@ -1,99 +1,239 @@
-# Tiny.CSharp Compiler
+# Tiny.CSharp
 
-A proof-of-concept compiler for a minimal C#-like language that generates C# source files.
+**A compact, reversible C# representation designed for LLMs and the .NET toolchain.**
 
-## Overview
+Tiny.CSharp (`.tcs`) is an experimental source language that compresses common C#
+syntax into a deterministic form, then expands it back into normal C#.
 
-Tiny.CSharp is a source-to-source compiler that transforms `.tcs` files (Tiny.CSharp files) into standard C# files. This allows developers to write concise class declarations that are then compiled into full C# code.
+The goal is not to create a different runtime or a different type system. The goal
+is to represent C# with less repetitive syntax, fewer characters, and eventually
+fewer LLM tokens while preserving a predictable path back to standard C#.
 
-## Features
+> Token efficiency must be measured with real model tokenizers. Shorter source is
+> a design goal, but character count alone is not treated as proof of token savings.
 
-- Compile `.tcs` files to `.cs` files
-- Support for public sealed class declarations with `psc` keyword
-- Property type inference and aliases (i, s, g, etc.)
-- Property access modes (get/set, get/init, get/private set)
-- Namespace inference from project structure
-- Explicit namespace and using directives
-- MSBuild integration for automatic compilation during build
+## Core design rules
 
-## Usage
+Tiny.CSharp is being designed around five rules:
 
-### Direct Compilation
+1. **Canonical syntax** — one preferred Tiny.CSharp representation for a supported
+   C# construct. No synonyms.
+2. **Composable abbreviations** — compact declaration codes are built from ordered
+   parts instead of introducing a new keyword for every combination.
+3. **Deterministic round trips** — supported C# should be convertible to Tiny.CSharp
+   and back without changing its meaning.
+4. **C# remains the authority** — generated source is ordinary C# and Roslyn remains
+   the final compiler.
+5. **No invented shorthand** — syntax is added to the language specification before
+   compilers, decompilers, or LLMs are expected to emit it.
+
+## Current language profile
+
+The current compiler supports a deliberately small class/property subset. It is a
+foundation for the broader compiler + decompiler architecture.
+
+### Compact type declarations
+
+Type declaration codes follow this canonical order:
+
+```text
+<accessibility><modifiers><kind>
+```
+
+The current profile assigns:
+
+| Part | Tiny | C# |
+|---|---:|---|
+| accessibility | `p` | `public` |
+| accessibility | `i` | `internal` |
+| modifier | `s` | `sealed` |
+| kind | `c` | `class` |
+
+That makes the currently supported declarations:
+
+| Tiny.CSharp | C# |
+|---|---|
+| `pc` | `public class` |
+| `psc` | `public sealed class` |
+| `ic` | `internal class` |
+| `isc` | `internal sealed class` |
+
+For example:
+
+```tinycs
+isc Match => Id,Name,Number:i|1
+```
+
+expands to:
+
+```csharp
+internal sealed class Match
+{
+    public string Id { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+    public int Number { get; init; }
+}
+```
+
+The same composition rule is intended to scale to additional accessibility,
+modifier, and type-kind codes. New codes are not considered part of the language
+until they are documented and implemented.
+
+### Properties
+
+The current property grammar is:
+
+```text
+PropertyName[:Type][|Mode]
+```
+
+Defaults:
+
+```text
+Type omitted  -> string
+Mode omitted  -> 0
+```
+
+Accessor modes:
+
+| Mode | Generated C# |
+|---:|---|
+| omitted / `0` | `{ get; set; }` |
+| `1` | `{ get; init; }` |
+| `2` | `{ get; private set; }` |
+
+Primitive aliases:
+
+| Tiny | C# |
+|---|---|
+| `s` | `string` |
+| `i` | `int` |
+| `l` | `long` |
+| `b` | `bool` |
+| `d` | `double` |
+| `m` | `decimal` |
+| `f` | `float` |
+| `c` | `char` |
+| `by` | `byte` |
+| `dt` | `DateTime` |
+| `g` | `Guid` |
+| `o` | `object` |
+
+Aliases are contextual. For example, `c` is the type-kind code when it appears
+at the end of a compact type declaration, and `char` when used as a property
+type alias.
+
+### Namespace and using directives
+
+```tinycs
+n:MyCompany.Domain
+u:System.Collections.Generic
+u:MyCompany.Contracts
+
+psc Match => Result:MatchResult
+```
+
+If `n:` is omitted, the compiler infers a namespace from the project root
+namespace and the relative directory containing the `.tcs` file.
+
+## Compiler
+
+Compile all `.tcs` files in a project with:
 
 ```bash
-dotnet run --project src/TinyCSharp.Compiler -- compile samples/TinyCSharp.Sample/TinyCSharp.Sample.csproj
+dotnet run --project src/TinyCSharp.Compiler -- compile path/to/project.csproj
 ```
 
-### MSBuild Integration
+Each `Name.tcs` owns the sibling `Name.cs`. Generation is performed through a
+temporary file and the sibling C# file is replaced only after Tiny.CSharp parsing
+and generation succeed.
 
-The compiler integrates with .NET projects via MSBuild targets. Simply add a `.tcs` file to your project and it will be automatically compiled during the build process.
+The repository also contains MSBuild integration in
+`build/TinyCSharp.Build.targets`, so the sample project can be built normally.
 
-## Syntax
+## Compiler + decompiler direction
 
-### Class Declaration
+Tiny.CSharp is intended to become bidirectional:
 
-```tinycs
-psc ClassName => Property1,Property2:Type|Mode
+```text
+C# source
+   |
+   | Roslyn parser / semantic model
+   v
+Canonical Tiny.CSharp model
+   ^
+   | Tiny parser
+   |
+Tiny.CSharp source
+
+Canonical model -> C# generator
+Canonical model -> Tiny.CSharp formatter
 ```
 
-### Property Modes
+The important architectural point is that C# -> Tiny.CSharp should not be a set of
+regular-expression replacements. Roslyn should parse C#, and both directions should
+share the same canonical language model and token tables.
 
-- `0` (default): `get; set;`
-- `1`: `get; init;`
-- `2`: `get; private set;`
+A round trip is judged by semantic equivalence for the supported subset, not by
+reproducing the original whitespace or formatting.
 
-### Primitive Type Aliases
+## Current implementation versus Foundation specification
 
-| Alias | Type |
-|-------|------|
-| s | string |
-| i | int |
-| l | long |
-| b | bool |
-| d | double |
-| m | decimal |
-| f | float |
-| c | char |
-| by | byte |
-| dt | DateTime |
-| g | Guid |
-| o | object |
+The repository's Foundation issue describes a larger target than the implementation
+currently provides. Today the project already has:
 
-### Namespace Directive
+- `.tcs` discovery and sibling `.cs` generation;
+- namespace inference plus explicit `n:`;
+- explicit `u:` directives;
+- primitive property aliases and accessor modes;
+- compact public/internal class declarations with optional `sealed`;
+- unit and end-to-end tests;
+- MSBuild integration and GitHub Actions.
 
-```tinycs
-n:MyCompany.MyNamespace
-psc MyClass => Property
+Important Foundation work still to be completed includes project-wide symbol/type
+resolution, stable `TCSxxxx` diagnostics with accurate locations, validation of
+namespace/using directives, richer C# type syntax, broader test coverage, and the
+C# -> Tiny.CSharp decompiler.
+
+## LLM system prompt
+
+The authoritative LLM contract lives in:
+
+```text
+prompts/system.md
 ```
 
-### Using Directive
+That prompt intentionally mirrors only syntax that is part of the compiler profile.
+When the language grows, the compiler, tests, README, and prompt should change in
+the same feature.
 
-```tinycs
-u:System.Collections.Generic
-psc MyClass => Property
-```
+## Repository structure
 
-## Project Structure
-
-```
+```text
 Tiny.CSharp/
-├── src/
-│   └── TinyCSharp.Compiler/          # The compiler implementation
-├── samples/
-│   └── TinyCSharp.Sample/            # Sample project
-├── build/
-│   └── TinyCSharp.Build.targets      # MSBuild integration
-├── .github/workflows/ci.yml          # CI workflow
-└── Directory.Build.props             # Automatic MSBuild target import
+├── build/                         # MSBuild integration
+├── docs/                          # Language and architecture documentation
+├── prompts/                       # LLM language contract
+├── samples/                       # Example .NET projects and .tcs files
+├── src/TinyCSharp.Compiler/
+│   ├── Compilation/
+│   ├── Generation/
+│   ├── Language/                  # Canonical language tokens/models
+│   └── Parsing/
+└── tests/
+    ├── TinyCSharp.Compiler.Tests/
+    └── TinyCSharp.IntegrationTests/
 ```
 
 ## Development
 
-To develop the compiler:
+The repository targets .NET 10.
 
-1. Run `dotnet build` in the `src/TinyCSharp.Compiler` directory
-2. Test with sample files in `samples/TinyCSharp.Sample/`
-3. Run `dotnet test` in the `tests/TinyCSharp.Compiler.Tests` directory
+```bash
+dotnet restore Tiny.CSharp.sln
+dotnet build Tiny.CSharp.sln
+dotnet test Tiny.CSharp.sln
+```
 
 ## License
 
