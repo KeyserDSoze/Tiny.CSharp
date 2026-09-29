@@ -20,6 +20,8 @@ public static class TinyDiagnosticCodes
     public const string FileCompilationFailed = "TCS4002";
     public const string ProjectMetadataUnavailable = "TCS4003";
 
+    public const string InternalCompilerFailure = "TCS5001";
+
     public const string InvalidCSharpSyntax = "TCS6001";
     public const string UnsupportedCSharpConstruct = "TCS6002";
     public const string AmbiguousCSharpType = "TCS6003";
