@@ -760,8 +760,23 @@ public sealed class TinyProjectTypeResolver
                 document.TypeDeclaration.Accessibility ==
                 TinyAccessibility.Public
                     ? "public"
-                    : "internal")
-            .Append(" class ")
+                    : "internal");
+
+        if (document.TypeDeclaration.IsAbstract)
+        {
+            sb.Append(" abstract");
+        }
+        else if (document.TypeDeclaration.IsSealed)
+        {
+            sb.Append(" sealed");
+        }
+
+        if (document.TypeDeclaration.IsPartial)
+        {
+            sb.Append(" partial");
+        }
+
+        sb.Append(" class ")
             .Append(document.ClassName)
             .AppendLine(" { }");
 
