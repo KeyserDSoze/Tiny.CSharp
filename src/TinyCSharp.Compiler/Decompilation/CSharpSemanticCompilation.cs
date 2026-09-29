@@ -24,7 +24,9 @@ public sealed class CSharpSemanticCompilation
     }
 
     public static CSharpSemanticCompilation Create(
-        IEnumerable<CSharpSourceDocument> sources)
+        IEnumerable<CSharpSourceDocument> sources,
+        IEnumerable<MetadataReference>? additionalReferences = null,
+        string assemblyName = "TinyCSharp.Decompilation")
     {
         var trees = new Dictionary<string, SyntaxTree>(StringComparer.OrdinalIgnoreCase);
 
@@ -47,10 +49,16 @@ public sealed class CSharpSemanticCompilation
                 path);
         }
 
+        var references = PlatformReferences.Value
+            .Concat(additionalReferences ?? Array.Empty<MetadataReference>())
+            .GroupBy(reference => reference.Display ?? string.Empty, StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.First())
+            .ToArray();
+
         var compilation = CSharpCompilation.Create(
-            "TinyCSharp.Decompilation",
+            assemblyName,
             trees.Values,
-            PlatformReferences.Value,
+            references,
             new CSharpCompilationOptions(
                 OutputKind.DynamicallyLinkedLibrary,
                 nullableContextOptions: NullableContextOptions.Enable));
