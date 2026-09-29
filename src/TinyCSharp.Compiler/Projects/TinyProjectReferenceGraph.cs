@@ -6,7 +6,8 @@ public sealed record TinyProjectReferenceNode(
     string ProjectPath,
     int Depth,
     string AssemblyName,
-    string RootNamespace);
+    string RootNamespace,
+    IReadOnlyList<string> ProjectReferences);
 
 public sealed class TinyProjectReferenceGraph
 {
@@ -32,13 +33,18 @@ public sealed class TinyProjectReferenceGraph
             }
 
             var metadata = ReadMetadata(projectPath);
+            var projectReferences = ReadProjectReferences(projectPath)
+                .OrderBy(path => path, StringComparer.Ordinal)
+                .ToArray();
+
             nodes[projectPath] = new TinyProjectReferenceNode(
                 projectPath,
                 depth,
                 metadata.AssemblyName,
-                metadata.RootNamespace);
+                metadata.RootNamespace,
+                projectReferences);
 
-            foreach (var referencedProject in ReadProjectReferences(projectPath))
+            foreach (var referencedProject in projectReferences)
             {
                 queue.Enqueue((referencedProject, depth + 1));
             }
