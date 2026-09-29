@@ -63,6 +63,12 @@ public sealed class TinyParser
                     StringComparer.Ordinal))
             {
                 syntaxTree.Usings.Add(usingName);
+                var (usingLine, usingColumn) =
+                    GetLineColumn(usingPosition);
+                syntaxTree.UsingLocations[usingName] =
+                    new TinySourceLocation(
+                        usingLine,
+                        usingColumn);
             }
 
             SkipWhitespaceAndComments();
@@ -489,4 +495,10 @@ public sealed class TinySyntaxTree : TinyDocument
 {
     public bool IsValid { get; set; } = true;
     public List<TinyDiagnostic> Diagnostics { get; set; } = new();
+    public Dictionary<string, TinySourceLocation> UsingLocations { get; } =
+        new(StringComparer.Ordinal);
 }
+
+public sealed record TinySourceLocation(
+    int Line,
+    int Column);
