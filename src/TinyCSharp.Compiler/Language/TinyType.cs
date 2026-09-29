@@ -6,7 +6,8 @@ public sealed record TinyType(
     string Name,
     IReadOnlyList<TinyType> TypeArguments,
     bool IsNullable = false,
-    int ArrayDepth = 0)
+    int ArrayDepth = 0,
+    string? ResolvedNamespace = null)
 {
     public static TinyType String { get; } = new("string", Array.Empty<TinyType>());
 
