@@ -1,3 +1,4 @@
+using System.Text.Json;
 using TinyCSharp.Compiler.Decompilation;
 using TinyCSharp.Compiler.Generation;
 using TinyCSharp.Compiler.Parsing;
@@ -254,6 +255,193 @@ public class Model
             var tiny = await File.ReadAllTextAsync(modelTinyPath);
             Assert.Contains("u:Example.Contracts", tiny);
             Assert.Contains("pc Model => Value:Result", tiny);
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task DecompileProject_ResolvesDirectProjectReference()
+    {
+        var root = Path.Combine(
+            Path.GetTempPath(),
+            "tinycs-decompile-project-ref-" + Guid.NewGuid().ToString("N"));
+        var app = Path.Combine(root, "App");
+        var contracts = Path.Combine(root, "Contracts");
+        var output = Path.Combine(root, "tiny-output");
+
+        Directory.CreateDirectory(app);
+        Directory.CreateDirectory(contracts);
+
+        try
+        {
+            var contractsProject = Path.Combine(contracts, "Contracts.csproj");
+            await File.WriteAllTextAsync(
+                contractsProject,
+                "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup></Project>");
+            await File.WriteAllTextAsync(
+                Path.Combine(contracts, "DirectReferencedContract.cs"),
+                "namespace Referenced.Contracts; public class DirectReferencedContract { }");
+
+            var appProject = Path.Combine(app, "App.csproj");
+            await File.WriteAllTextAsync(
+                appProject,
+                """
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Contracts/Contracts.csproj" />
+  </ItemGroup>
+</Project>
+""");
+
+            await File.WriteAllTextAsync(
+                Path.Combine(app, "Model.cs"),
+                """
+using Referenced.Contracts;
+
+public class Model
+{
+    public DirectReferencedContract Value { get; set; }
+}
+""");
+
+            var result = await new CSharpProjectDecompiler().DecompileAsync(
+                appProject,
+                output);
+
+            Assert.True(result.Success);
+            Assert.Single(result.Files);
+
+            var tinyPath = Path.Combine(output, "Model.tcs");
+            Assert.True(File.Exists(tinyPath));
+
+            var tiny = await File.ReadAllTextAsync(tinyPath);
+            Assert.Contains("u:Referenced.Contracts", tiny);
+            Assert.Contains(
+                "pc Model => Value:DirectReferencedContract",
+                tiny);
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task DecompileProject_ResolvesPackageCompileAsset()
+    {
+        var root = Path.Combine(
+            Path.GetTempPath(),
+            "tinycs-decompile-package-" + Guid.NewGuid().ToString("N"));
+        var packageRoot = Path.Combine(root, "packages");
+        var packageAssemblyDirectory = Path.Combine(
+            packageRoot,
+            "tiny.fake.package",
+            "1.0.0",
+            "lib",
+            "net10.0");
+        var obj = Path.Combine(root, "obj");
+        var output = Path.Combine(root, "tiny-output");
+
+        Directory.CreateDirectory(packageAssemblyDirectory);
+        Directory.CreateDirectory(obj);
+
+        try
+        {
+            var compilerAssembly =
+                typeof(TinyCSharp.Compiler.Compilation.TinyProjectCompiler)
+                    .Assembly
+                    .Location;
+            var copiedAssembly = Path.Combine(
+                packageAssemblyDirectory,
+                "TinyCSharp.Compiler.dll");
+
+            File.Copy(
+                compilerAssembly,
+                copiedAssembly,
+                overwrite: true);
+
+            var projectPath = Path.Combine(root, "Example.csproj");
+            await File.WriteAllTextAsync(
+                projectPath,
+                """
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Tiny.Fake.Package" Version="1.0.0" />
+  </ItemGroup>
+</Project>
+""");
+
+            var normalizedPackageRoot =
+                packageRoot.Replace('\\', '/') + "/";
+            var assets = new Dictionary<string, object?>
+            {
+                ["version"] = 3,
+                ["targets"] = new Dictionary<string, object?>
+                {
+                    ["net10.0"] = new Dictionary<string, object?>
+                    {
+                        ["Tiny.Fake.Package/1.0.0"] = new Dictionary<string, object?>
+                        {
+                            ["compile"] = new Dictionary<string, object?>
+                            {
+                                ["lib/net10.0/TinyCSharp.Compiler.dll"] =
+                                    new Dictionary<string, object?>()
+                            }
+                        }
+                    }
+                },
+                ["libraries"] = new Dictionary<string, object?>
+                {
+                    ["Tiny.Fake.Package/1.0.0"] = new Dictionary<string, object?>
+                    {
+                        ["type"] = "package",
+                        ["path"] = "tiny.fake.package/1.0.0"
+                    }
+                },
+                ["packageFolders"] = new Dictionary<string, object?>
+                {
+                    [normalizedPackageRoot] = new Dictionary<string, object?>()
+                }
+            };
+
+            await File.WriteAllTextAsync(
+                Path.Combine(obj, "project.assets.json"),
+                JsonSerializer.Serialize(assets));
+
+            await File.WriteAllTextAsync(
+                Path.Combine(root, "Model.cs"),
+                """
+using TinyCSharp.Compiler.Compilation;
+
+public class Model
+{
+    public TinyProjectCompiler Compiler { get; set; }
+}
+""");
+
+            var result = await new CSharpProjectDecompiler().DecompileAsync(
+                projectPath,
+                output);
+
+            Assert.True(result.Success);
+            var tiny = await File.ReadAllTextAsync(
+                Path.Combine(output, "Model.tcs"));
+
+            Assert.Contains("u:TinyCSharp.Compiler.Compilation", tiny);
+            Assert.Contains(
+                "pc Model => Compiler:TinyProjectCompiler",
+                tiny);
         }
         finally
         {
