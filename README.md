@@ -151,9 +151,21 @@ and generation succeed.
 The repository also contains MSBuild integration in
 `build/TinyCSharp.Build.targets`, so the sample project can be built normally.
 
-## Compiler + decompiler direction
+For the currently supported C# subset, a single C# file can be converted back to
+canonical Tiny.CSharp with Roslyn:
 
-Tiny.CSharp is intended to become bidirectional:
+```bash
+dotnet run --project src/TinyCSharp.Compiler -- decompile path/to/Model.cs
+dotnet run --project src/TinyCSharp.Compiler -- decompile path/to/Model.cs path/to/Model.tcs
+```
+
+The decompiler is intentionally strict. If the C# file contains semantics the
+current Tiny.CSharp profile cannot represent, conversion fails instead of silently
+dropping information.
+
+## Compiler + decompiler architecture
+
+The current bidirectional foundation is:
 
 ```text
 C# source
@@ -170,9 +182,9 @@ Canonical model -> C# generator
 Canonical model -> Tiny.CSharp formatter
 ```
 
-The important architectural point is that C# -> Tiny.CSharp should not be a set of
-regular-expression replacements. Roslyn should parse C#, and both directions should
-share the same canonical language model and token tables.
+C# -> Tiny.CSharp is implemented with Roslyn rather than regular-expression
+replacement. Both directions share `TinyDocument`, the declaration codec, and
+the same canonical type-alias table.
 
 A round trip is judged by semantic equivalence for the supported subset, not by
 reproducing the original whitespace or formatting.
@@ -187,13 +199,17 @@ currently provides. Today the project already has:
 - explicit `u:` directives;
 - primitive property aliases and accessor modes;
 - compact public/internal class declarations with optional `sealed`;
+- a shared canonical `TinyDocument` model and centralized type aliases;
+- a Roslyn-based C# -> Tiny.CSharp decompiler for the supported subset;
+- a canonical Tiny.CSharp formatter;
+- C# -> Tiny -> C# round-trip tests;
 - unit and end-to-end tests;
 - MSBuild integration and GitHub Actions.
 
 Important Foundation work still to be completed includes project-wide symbol/type
 resolution, stable `TCSxxxx` diagnostics with accurate locations, validation of
-namespace/using directives, richer C# type syntax, broader test coverage, and the
-C# -> Tiny.CSharp decompiler.
+namespace/using directives, richer C# type syntax, broader test coverage, and
+project-level C# -> Tiny.CSharp conversion.
 
 ## LLM system prompt
 
@@ -217,7 +233,8 @@ Tiny.CSharp/
 ├── samples/                       # Example .NET projects and .tcs files
 ├── src/TinyCSharp.Compiler/
 │   ├── Compilation/
-│   ├── Generation/
+│   ├── Decompilation/             # Roslyn C# -> Tiny.CSharp
+│   ├── Generation/                # C# generator + Tiny formatter
 │   ├── Language/                  # Canonical language tokens/models
 │   └── Parsing/
 └── tests/
