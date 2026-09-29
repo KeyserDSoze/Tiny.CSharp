@@ -224,8 +224,11 @@ public sealed class TinyProjectMetadataReferenceLoader
                 continue;
             }
 
+            var normalizedHintPath = hintPath
+                .Replace('\\', Path.DirectorySeparatorChar)
+                .Replace('/', Path.DirectorySeparatorChar);
             var fullPath = Path.GetFullPath(
-                Path.Combine(projectDirectory, hintPath));
+                Path.Combine(projectDirectory, normalizedHintPath));
 
             if (!File.Exists(fullPath))
             {
