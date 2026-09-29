@@ -15,6 +15,7 @@ public sealed class TinyProjectTypeResolver
     public async Task<IReadOnlyList<TinyDiagnostic>> ResolveAsync(
         string projectDirectory,
         IReadOnlyList<TinySyntaxTree> documents,
+        bool emitAutomaticUsings = true,
         CancellationToken cancellationToken = default)
     {
         if (documents.Count == 0)
@@ -57,7 +58,8 @@ public sealed class TinyProjectTypeResolver
                     property,
                     document,
                     index,
-                    diagnostics);
+                    diagnostics,
+                    emitAutomaticUsings);
             }
         }
 
@@ -69,7 +71,8 @@ public sealed class TinyProjectTypeResolver
         TinyProperty property,
         TinySyntaxTree document,
         IReadOnlyDictionary<TypeKey, IReadOnlyList<TypeCandidate>> index,
-        List<TinyDiagnostic> diagnostics)
+        List<TinyDiagnostic> diagnostics,
+        bool emitAutomaticUsings)
     {
         var resolvedArguments = type.TypeArguments
             .Select(argument => ResolveType(
@@ -77,7 +80,8 @@ public sealed class TinyProjectTypeResolver
                 property,
                 document,
                 index,
-                diagnostics))
+                diagnostics,
+                emitAutomaticUsings))
             .ToArray();
 
         type = type with { TypeArguments = resolvedArguments };
@@ -162,12 +166,23 @@ public sealed class TinyProjectTypeResolver
             !string.Equals(
                 selected.Namespace,
                 document.Namespace,
-                StringComparison.Ordinal) &&
-            !document.Usings.Contains(
-                selected.Namespace,
-                StringComparer.Ordinal))
+                StringComparison.Ordinal))
         {
-            document.Usings.Add(selected.Namespace);
+            if (!emitAutomaticUsings)
+            {
+                return type with
+                {
+                    Name = selected.QualifiedName,
+                    ResolvedNamespace = selected.Namespace
+                };
+            }
+
+            if (!document.Usings.Contains(
+                    selected.Namespace,
+                    StringComparer.Ordinal))
+            {
+                document.Usings.Add(selected.Namespace);
+            }
         }
 
         return type with
