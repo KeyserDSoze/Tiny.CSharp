@@ -32,7 +32,7 @@ internal sealed class Match
         var tiny = formatter.Format(result.Document!);
 
         Assert.Equal(
-            "n:Example.Domain\nu:System\n\nisc Match => Id:g|1,Name,Score:i|2\n",
+            "n:Example.Domain\n\nisc Match => Id:g|1,Name,Score:i|2\n",
             tiny);
     }
 
@@ -107,6 +107,94 @@ public class QualifiedTypes
         var regenerated = new CSharpGenerator().Generate(parsed);
         Assert.Contains("public System.Collections.Generic.List<string> Names { get; set; }", regenerated);
         Assert.Contains("public System.Guid Id { get; init; }", regenerated);
+    }
+
+    [Fact]
+    public void Decompile_Semantics_RemoveUnusedUsingsAndKeepRequiredOnes()
+    {
+        const string source = """
+using System.Collections.Generic;
+using System.Threading.Tasks;
+
+public class Types
+{
+    public List<int> Values { get; set; }
+}
+""";
+
+        var result = new CSharpDecompiler().Decompile(source);
+        Assert.True(result.Success);
+
+        var tiny = new TinyFormatter().Format(result.Document!);
+
+        Assert.Contains("u:System.Collections.Generic", tiny);
+        Assert.DoesNotContain("u:System.Threading.Tasks", tiny);
+        Assert.Contains("Values:List<i>", tiny);
+    }
+
+    [Fact]
+    public void Decompile_MultiFileSemanticContext_ResolvesProjectTypeUsing()
+    {
+        var context = CSharpSemanticCompilation.Create(
+            new[]
+            {
+                new CSharpSourceDocument(
+                    "Contracts/Result.cs",
+                    "namespace Example.Contracts; public class Result { }"),
+                new CSharpSourceDocument(
+                    "Models/Model.cs",
+                    """
+using Example.Contracts;
+namespace Example.Models;
+
+public class Model
+{
+    public Result Value { get; set; }
+}
+""")
+            });
+
+        var result = new CSharpDecompiler().Decompile(context, "Models/Model.cs");
+
+        Assert.True(result.Success);
+        Assert.Equal("Example.Contracts", result.Document!.Properties[0].Type.ResolvedNamespace);
+
+        var tiny = new TinyFormatter().Format(result.Document);
+        Assert.Contains("u:Example.Contracts", tiny);
+        Assert.Contains("Value:Result", tiny);
+    }
+
+    [Fact]
+    public void Decompile_AmbiguousSemanticType_ReportsTcs6003()
+    {
+        var context = CSharpSemanticCompilation.Create(
+            new[]
+            {
+                new CSharpSourceDocument(
+                    "A/Result.cs",
+                    "namespace A; public class Result { }"),
+                new CSharpSourceDocument(
+                    "B/Result.cs",
+                    "namespace B; public class Result { }"),
+                new CSharpSourceDocument(
+                    "Model.cs",
+                    """
+using A;
+using B;
+
+public class Model
+{
+    public Result Value { get; set; }
+}
+""")
+            });
+
+        var result = new CSharpDecompiler().Decompile(context, "Model.cs");
+
+        Assert.False(result.Success);
+        var diagnostic = Assert.Single(result.Diagnostics);
+        Assert.Equal("TCS6003", diagnostic.Code);
+        Assert.Contains("ambiguous", diagnostic.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
