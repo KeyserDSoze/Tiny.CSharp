@@ -51,31 +51,32 @@ public class Program
         var compiler = new TinyProjectCompiler();
         var result = await compiler.CompileAsync(projectPath);
 
-        if (result.Success)
+        Console.WriteLine(
+            result.Success
+                ? "Compilation succeeded!"
+                : "Compilation failed!");
+
+        foreach (var file in result.Files)
         {
-            Console.WriteLine("Compilation succeeded!");
-
-            foreach (var file in result.Files)
+            if (file.Success)
             {
-                if (file.Success)
-                {
-                    Console.WriteLine($"Generated: {file.FilePath.Substring(0, file.FilePath.Length - 4)}.cs");
-                }
+                Console.WriteLine(
+                    $"Generated: {Path.ChangeExtension(file.FilePath, ".cs")}");
             }
-
-            return 0;
         }
-
-        Console.WriteLine("Compilation failed!");
 
         foreach (var diagnostic in result.Diagnostics)
         {
-            Console.WriteLine(
+            var writer = diagnostic.Severity == TinyDiagnosticSeverity.Error
+                ? Console.Error
+                : Console.Out;
+
+            writer.WriteLine(
                 $"{diagnostic.FilePath}({diagnostic.Line},{diagnostic.Column}): " +
                 $"{diagnostic.Severity} {diagnostic.Code}: {diagnostic.Message}");
         }
 
-        return 1;
+        return result.Success ? 0 : 1;
     }
 
     private static async Task<int> DecompileFileAsync(string csharpPath, string? outputPath)
