@@ -317,6 +317,16 @@ public sealed class CSharpDecompiler
                 return true;
             }
 
+            case QualifiedNameSyntax qualified:
+            {
+                if (!TryReadQualifiedType(qualified, out type))
+                {
+                    return false;
+                }
+
+                return true;
+            }
+
             case NullableTypeSyntax nullable:
                 if (!TryReadType(nullable.ElementType, out var nullableElement) ||
                     nullableElement.ArrayDepth > 0)
@@ -344,6 +354,44 @@ public sealed class CSharpDecompiler
             default:
                 return false;
         }
+    }
+
+    private static bool TryReadQualifiedType(
+        QualifiedNameSyntax qualified,
+        out TinyType type)
+    {
+        type = TinyType.String;
+        var prefix = qualified.Left.ToString();
+
+        if (qualified.Right is IdentifierNameSyntax identifier)
+        {
+            type = new TinyType(
+                $"{prefix}.{identifier.Identifier.ValueText}",
+                Array.Empty<TinyType>());
+            return true;
+        }
+
+        if (qualified.Right is GenericNameSyntax generic)
+        {
+            var arguments = new List<TinyType>();
+
+            foreach (var argumentSyntax in generic.TypeArgumentList.Arguments)
+            {
+                if (!TryReadType(argumentSyntax, out var argument))
+                {
+                    return false;
+                }
+
+                arguments.Add(argument);
+            }
+
+            type = new TinyType(
+                $"{prefix}.{generic.Identifier.ValueText}",
+                arguments);
+            return true;
+        }
+
+        return false;
     }
 
     private static bool ValidateInitializer(
