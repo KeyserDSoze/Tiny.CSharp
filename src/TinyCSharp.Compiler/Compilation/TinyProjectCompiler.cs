@@ -66,7 +66,8 @@ public sealed class TinyProjectCompiler
                     syntaxTree.Namespace = InferNamespace(
                         projectPath,
                         projectMetadata,
-                        tcsFile);
+                        tcsFile,
+                        diagnostics);
                 }
 
                 if (!syntaxTree.IsValid)
@@ -309,7 +310,8 @@ public sealed class TinyProjectCompiler
     private static string InferNamespace(
         string projectPath,
         TinyProjectMetadata metadata,
-        string tcsFilePath)
+        string tcsFilePath,
+        List<TinyDiagnostic> diagnostics)
     {
         var projectDirectory =
             Path.GetDirectoryName(projectPath) ?? string.Empty;
@@ -328,16 +330,37 @@ public sealed class TinyProjectCompiler
             return baseNamespace;
         }
 
-        var segments = relativeDirectory
-            .Split(
-                new[]
-                {
-                    Path.DirectorySeparatorChar,
-                    Path.AltDirectorySeparatorChar
-                },
-                StringSplitOptions.RemoveEmptyEntries)
-            .Select(NormalizeNamespaceSegment)
-            .Where(segment => !string.IsNullOrWhiteSpace(segment));
+        var segments = new List<string>();
+
+        foreach (var segment in relativeDirectory.Split(
+                     new[]
+                     {
+                         Path.DirectorySeparatorChar,
+                         Path.AltDirectorySeparatorChar
+                     },
+                     StringSplitOptions.RemoveEmptyEntries))
+        {
+            var normalized = NormalizeNamespaceSegment(segment);
+
+            if (!string.Equals(
+                    segment,
+                    normalized,
+                    StringComparison.Ordinal))
+            {
+                diagnostics.Add(new TinyDiagnostic(
+                    TinyDiagnosticSeverity.Warning,
+                    $"Folder namespace segment '{segment}' was normalized to '{normalized}'.",
+                    tcsFilePath,
+                    1,
+                    1,
+                    Code: TinyDiagnosticCodes.NamespaceSegmentNormalized));
+            }
+
+            if (!string.IsNullOrWhiteSpace(normalized))
+            {
+                segments.Add(normalized);
+            }
+        }
 
         var suffix = string.Join('.', segments);
 
