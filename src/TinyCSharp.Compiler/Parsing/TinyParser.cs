@@ -113,9 +113,23 @@ public sealed class TinyParser
 
         while (!IsEndOfContent())
         {
+            var propertyPosition = _position;
             var property = ParseProperty();
             if (property is null)
             {
+                return Invalid(syntaxTree);
+            }
+
+            if (syntaxTree.Properties.Any(existing =>
+                    string.Equals(
+                        existing.Name,
+                        property.Name,
+                        StringComparison.Ordinal)))
+            {
+                AddError(
+                    TinyDiagnosticCodes.DuplicateProperty,
+                    $"Property '{property.Name}' is declared more than once.",
+                    propertyPosition);
                 return Invalid(syntaxTree);
             }
 
@@ -368,6 +382,12 @@ public sealed class TinyParser
         }
 
         var value = _content.Substring(start, _position - start).Trim();
+        var commentIndex = value.IndexOf("//", StringComparison.Ordinal);
+
+        if (commentIndex >= 0)
+        {
+            value = value.Substring(0, commentIndex).TrimEnd();
+        }
 
         if (_position < _content.Length && _content[_position] == '\r')
         {
