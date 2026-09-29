@@ -15,6 +15,11 @@ public sealed class CompilerTests
     [InlineData("psc", "public sealed class")]
     [InlineData("ic", "internal class")]
     [InlineData("isc", "internal sealed class")]
+    [InlineData("pac", "public abstract class")]
+    [InlineData("ppc", "public partial class")]
+    [InlineData("papc", "public abstract partial class")]
+    [InlineData("pspc", "public sealed partial class")]
+    [InlineData("iapc", "internal abstract partial class")]
     public void Parse_CompactTypeDeclaration_IsCanonical(string token, string expectedDeclaration)
     {
         var parser = new TinyParser();
@@ -26,6 +31,23 @@ public sealed class CompilerTests
         var generator = new CSharpGenerator();
         var output = generator.Generate(tree);
         Assert.Contains($"{expectedDeclaration} Match", output);
+    }
+
+    [Theory]
+    [InlineData("pasc")]
+    [InlineData("ppac")]
+    [InlineData("psac")]
+    [InlineData("paapc")]
+    public void Parse_NonCanonicalClassModifiers_AreRejected(
+        string token)
+    {
+        var tree = new TinyParser().Parse(
+            $"{token} Model => Id",
+            "Model.tcs");
+
+        Assert.False(tree.IsValid);
+        var diagnostic = Assert.Single(tree.Diagnostics);
+        Assert.Equal("TCS1001", diagnostic.Code);
     }
 
     [Fact]
