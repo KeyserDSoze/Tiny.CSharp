@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Text;
+using TinyCSharp.Compiler.Language;
 using TinyCSharp.Compiler.Parsing;
 
 namespace TinyCSharp.Compiler.Generation;
@@ -46,7 +47,16 @@ public sealed class CSharpGenerator
         }
         
         // Add class declaration
-        sb.AppendLine($"public sealed class {syntaxTree.ClassName}");
+        var accessibility = syntaxTree.TypeDeclaration.Accessibility switch
+        {
+            TinyAccessibility.Public => "public",
+            TinyAccessibility.Internal => "internal",
+            _ => throw new InvalidOperationException(
+                $"Unsupported accessibility: {syntaxTree.TypeDeclaration.Accessibility}")
+        };
+
+        var sealedModifier = syntaxTree.TypeDeclaration.IsSealed ? " sealed" : string.Empty;
+        sb.AppendLine($"{accessibility}{sealedModifier} class {syntaxTree.ClassName}");
         sb.AppendLine("{");
         
         // Add properties
