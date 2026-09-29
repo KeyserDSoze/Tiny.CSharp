@@ -141,7 +141,17 @@ public sealed class TinyProjectCompiler
                 options);
         }
 
+        var parsedFilePaths = parsedFiles
+            .Select(file => file.FilePath)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        diagnostics.AddRange(
+            resolutionDiagnostics.Where(diagnostic =>
+                !parsedFilePaths.Contains(diagnostic.FilePath)));
+
         var diagnosticsByFile = resolutionDiagnostics
+            .Where(diagnostic =>
+                parsedFilePaths.Contains(diagnostic.FilePath))
             .GroupBy(
                 diagnostic => diagnostic.FilePath,
                 StringComparer.OrdinalIgnoreCase)
@@ -160,9 +170,14 @@ public sealed class TinyProjectCompiler
                 ? resolvedDiagnostics.ToList()
                 : new List<TinyDiagnostic>();
 
-            if (options.TreatWarningsAsErrors &&
+            var hasResolutionError = fileDiagnostics.Any(diagnostic =>
+                diagnostic.Severity == TinyDiagnosticSeverity.Error);
+            var hasBlockingWarning =
+                options.TreatWarningsAsErrors &&
                 fileDiagnostics.Any(diagnostic =>
-                    diagnostic.Severity == TinyDiagnosticSeverity.Warning))
+                    diagnostic.Severity == TinyDiagnosticSeverity.Warning);
+
+            if (hasResolutionError || hasBlockingWarning)
             {
                 results.Add(new TinyFileCompilationResult(
                     parsedFile.FilePath,
