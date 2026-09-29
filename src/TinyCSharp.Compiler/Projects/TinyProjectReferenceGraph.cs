@@ -71,8 +71,12 @@ public sealed class TinyProjectReferenceGraph
                 continue;
             }
 
+            var normalizedInclude = include
+                .Replace('\\', Path.DirectorySeparatorChar)
+                .Replace('/', Path.DirectorySeparatorChar);
+
             yield return Path.GetFullPath(
-                Path.Combine(projectDirectory, include));
+                Path.Combine(projectDirectory, normalizedInclude));
         }
     }
 
