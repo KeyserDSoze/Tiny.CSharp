@@ -1,3 +1,4 @@
+using System.Text.Json;
 using TinyCSharp.Compiler.Compilation;
 using TinyCSharp.Compiler.Generation;
 using TinyCSharp.Compiler.Language;
@@ -659,31 +660,40 @@ public sealed class CompilerTests
 
             var normalizedPackageRoot =
                 packageRoot.Replace('\\', '/') + "/";
+            var assets = new Dictionary<string, object?>
+            {
+                ["version"] = 3,
+                ["targets"] = new Dictionary<string, object?>
+                {
+                    ["net10.0"] = new Dictionary<string, object?>
+                    {
+                        ["Tiny.Fake.Package/1.0.0"] = new Dictionary<string, object?>
+                        {
+                            ["compile"] = new Dictionary<string, object?>
+                            {
+                                ["lib/net10.0/TinyCSharp.Compiler.dll"] =
+                                    new Dictionary<string, object?>()
+                            }
+                        }
+                    }
+                },
+                ["libraries"] = new Dictionary<string, object?>
+                {
+                    ["Tiny.Fake.Package/1.0.0"] = new Dictionary<string, object?>
+                    {
+                        ["type"] = "package",
+                        ["path"] = "tiny.fake.package/1.0.0"
+                    }
+                },
+                ["packageFolders"] = new Dictionary<string, object?>
+                {
+                    [normalizedPackageRoot] = new Dictionary<string, object?>()
+                }
+            };
+
             await File.WriteAllTextAsync(
                 Path.Combine(obj, "project.assets.json"),
-                $"""
-{
-  "version": 3,
-  "targets": {
-    "net10.0": {
-      "Tiny.Fake.Package/1.0.0": {
-        "compile": {
-          "lib/net10.0/TinyCSharp.Compiler.dll": {}
-        }
-      }
-    }
-  },
-  "libraries": {
-    "Tiny.Fake.Package/1.0.0": {
-      "type": "package",
-      "path": "tiny.fake.package/1.0.0"
-    }
-  },
-  "packageFolders": {
-    "{{normalizedPackageRoot}}": {}
-  }
-}
-""");
+                JsonSerializer.Serialize(assets));
 
             await File.WriteAllTextAsync(
                 Path.Combine(root, "Model.tcs"),
