@@ -37,3 +37,7 @@ jobs:
     - name: Run sample compilation
       run: dotnet build samples/TinyCSharp.Sample/TinyCSharp.Sample.csproj --no-restore --verbosity normal
       working-directory: ${{ github.workspace }}
+
+    - name: Run token benchmark
+      run: dotnet run --project src/TinyCSharp.Compiler/TinyCSharp.Compiler.csproj --no-build -- benchmark samples/TinyCSharp.Sample/Match.cs
+      working-directory: ${{ github.workspace }}
