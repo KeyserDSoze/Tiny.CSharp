@@ -1,3 +1,4 @@
+using Microsoft.CodeAnalysis.CSharp;
 using TinyCSharp.Compiler.Compilation;
 using TinyCSharp.Compiler.Diagnostics;
 using TinyCSharp.Compiler.Language;
@@ -27,14 +28,53 @@ public sealed class TinyParser
 
         if (Match("n:"))
         {
-            syntaxTree.Namespace = ParseLineValue();
+            var namespacePosition = _position;
+            var namespaceName = ParseLineValue();
+
+            if (!IsValidNamespaceName(namespaceName))
+            {
+                AddError(
+                    TinyDiagnosticCodes.InvalidNamespace,
+                    $"Invalid namespace '{namespaceName}'.",
+                    namespacePosition);
+                return Invalid(syntaxTree);
+            }
+
+            syntaxTree.Namespace = namespaceName;
             SkipWhitespaceAndComments();
         }
 
         while (Match("u:"))
         {
-            syntaxTree.Usings.Add(ParseLineValue());
+            var usingPosition = _position;
+            var usingName = ParseLineValue();
+
+            if (!IsValidNamespaceName(usingName))
+            {
+                AddError(
+                    TinyDiagnosticCodes.InvalidUsing,
+                    $"Invalid using namespace '{usingName}'.",
+                    usingPosition);
+                return Invalid(syntaxTree);
+            }
+
+            if (!syntaxTree.Usings.Contains(
+                    usingName,
+                    StringComparer.Ordinal))
+            {
+                syntaxTree.Usings.Add(usingName);
+            }
+
             SkipWhitespaceAndComments();
+        }
+
+        if (Match("n:"))
+        {
+            AddError(
+                TinyDiagnosticCodes.InvalidNamespaceDirectiveOrder,
+                "The namespace directive may appear only once and before all using directives.",
+                _position - 2);
+            return Invalid(syntaxTree);
         }
 
         var declarationPosition = _position;
@@ -269,6 +309,51 @@ public sealed class TinyParser
         }
 
         return _content.Substring(start, _position - start);
+    }
+
+    private static bool IsValidNamespaceName(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        var segments = value.Split('.');
+
+        if (segments.Length == 0)
+        {
+            return false;
+        }
+
+        foreach (var segment in segments)
+        {
+            if (string.IsNullOrWhiteSpace(segment))
+            {
+                return false;
+            }
+
+            if (segment[0] == '@')
+            {
+                var escaped = segment.Substring(1);
+
+                if (string.IsNullOrWhiteSpace(escaped) ||
+                    (!SyntaxFacts.IsValidIdentifier(escaped) &&
+                     SyntaxFacts.GetKeywordKind(escaped) == SyntaxKind.None))
+                {
+                    return false;
+                }
+
+                continue;
+            }
+
+            if (!SyntaxFacts.IsValidIdentifier(segment) ||
+                SyntaxFacts.GetKeywordKind(segment) != SyntaxKind.None)
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private string ParseLineValue()
