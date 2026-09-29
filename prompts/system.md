@@ -383,3 +383,21 @@ unchanged, and allow the normal C# compiler to perform final validation.
 
 Do not treat a `TCS2001` or `TCS2002` warning as a compiler failure unless the
 caller explicitly enables warnings-as-errors.
+
+
+## Namespace/import diagnostics
+
+Current namespace/import behavior is part of the language contract:
+
+```text
+TCS1009 = duplicate property declaration
+TCS2003 = invalid explicit namespace
+TCS2004 = invalid using namespace syntax
+TCS2005 = namespace directive repeated or placed after using directives
+TCS2006 = inferred folder namespace segment normalized (warning)
+TCS2007 = explicit using namespace not found in the semantic symbol universe
+```
+
+A `TCS2007` error must prevent replacing the sibling generated C# file. Successful
+compilation may still contain warnings such as `TCS2001`, `TCS2002`, or
+`TCS2006`; preserve and report them instead of hiding them.
