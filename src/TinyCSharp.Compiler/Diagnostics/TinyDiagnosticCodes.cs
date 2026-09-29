@@ -19,4 +19,5 @@ public static class TinyDiagnosticCodes
 
     public const string InvalidCSharpSyntax = "TCS6001";
     public const string UnsupportedCSharpConstruct = "TCS6002";
+    public const string AmbiguousCSharpType = "TCS6003";
 }
