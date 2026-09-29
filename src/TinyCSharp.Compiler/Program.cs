@@ -65,7 +65,7 @@ public class Program
         {
             Console.WriteLine(
                 $"{diagnostic.FilePath}({diagnostic.Line},{diagnostic.Column}): " +
-                $"{diagnostic.Severity} {diagnostic.Message}");
+                $"{diagnostic.Severity} {diagnostic.Code}: {diagnostic.Message}");
         }
 
         return 1;
@@ -88,7 +88,7 @@ public class Program
             foreach (var diagnostic in result.Diagnostics)
             {
                 Console.Error.WriteLine(
-                    $"{csharpPath}({diagnostic.Line},{diagnostic.Column}): error {diagnostic.Message}");
+                    $"{csharpPath}({diagnostic.Line},{diagnostic.Column}): error {diagnostic.Code}: {diagnostic.Message}");
             }
 
             return 1;
