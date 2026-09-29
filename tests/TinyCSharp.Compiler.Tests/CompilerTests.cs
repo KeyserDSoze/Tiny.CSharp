@@ -122,6 +122,180 @@ public sealed class CompilerTests
     }
 
     [Fact]
+    public async Task CompileAsync_ResolvesTypeFromAnotherTinyFile_AndAddsUsing()
+    {
+        var root = Path.Combine(
+            Path.GetTempPath(),
+            "tinycs-resolution-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(Path.Combine(root, "Contracts"));
+        Directory.CreateDirectory(Path.Combine(root, "Models"));
+
+        try
+        {
+            var projectPath = Path.Combine(root, "Example.csproj");
+            await File.WriteAllTextAsync(
+                projectPath,
+                "<Project><PropertyGroup><TargetFramework>net10.0</TargetFramework><RootNamespace>Example</RootNamespace></PropertyGroup></Project>");
+
+            await File.WriteAllTextAsync(
+                Path.Combine(root, "Contracts", "Team.tcs"),
+                "pc Team => Id");
+            await File.WriteAllTextAsync(
+                Path.Combine(root, "Models", "Match.tcs"),
+                "psc Match => HomeTeam:Team");
+
+            var result = await new TinyProjectCompiler().CompileAsync(projectPath);
+
+            Assert.True(result.Success);
+            Assert.DoesNotContain(
+                result.Diagnostics,
+                diagnostic => diagnostic.Code == "TCS2002");
+
+            var output = await File.ReadAllTextAsync(
+                Path.Combine(root, "Models", "Match.cs"));
+            Assert.Contains("using Example.Contracts;", output);
+            Assert.Contains("public Team HomeTeam { get; set; }", output);
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task CompileAsync_ResolvesTypeFromHandwrittenCSharp()
+    {
+        var root = Path.Combine(
+            Path.GetTempPath(),
+            "tinycs-csharp-resolution-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(Path.Combine(root, "Contracts"));
+        Directory.CreateDirectory(Path.Combine(root, "Models"));
+
+        try
+        {
+            var projectPath = Path.Combine(root, "Example.csproj");
+            await File.WriteAllTextAsync(
+                projectPath,
+                "<Project><PropertyGroup><TargetFramework>net10.0</TargetFramework><RootNamespace>Example</RootNamespace></PropertyGroup></Project>");
+            await File.WriteAllTextAsync(
+                Path.Combine(root, "Contracts", "Result.cs"),
+                "namespace Example.Contracts; public class Result { }");
+            await File.WriteAllTextAsync(
+                Path.Combine(root, "Models", "Model.tcs"),
+                "pc Model => Value:Result");
+
+            var result = await new TinyProjectCompiler().CompileAsync(projectPath);
+
+            Assert.True(result.Success);
+            var output = await File.ReadAllTextAsync(
+                Path.Combine(root, "Models", "Model.cs"));
+            Assert.Contains("using Example.Contracts;", output);
+            Assert.Contains("public Result Value { get; set; }", output);
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task CompileAsync_UnresolvedType_WarnsAndEmitsNameUnchanged()
+    {
+        var root = Path.Combine(
+            Path.GetTempPath(),
+            "tinycs-unresolved-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+
+        try
+        {
+            var projectPath = Path.Combine(root, "Example.csproj");
+            await File.WriteAllTextAsync(
+                projectPath,
+                "<Project><PropertyGroup><TargetFramework>net10.0</TargetFramework><RootNamespace>Example</RootNamespace></PropertyGroup></Project>");
+            await File.WriteAllTextAsync(
+                Path.Combine(root, "Model.tcs"),
+                "pc Model => Value:MissingType");
+
+            var result = await new TinyProjectCompiler().CompileAsync(projectPath);
+
+            Assert.True(result.Success);
+            var diagnostic = Assert.Single(
+                result.Diagnostics,
+                diagnostic => diagnostic.Code == "TCS2002");
+            Assert.Equal(TinyDiagnosticSeverity.Warning, diagnostic.Severity);
+            Assert.True(diagnostic.Line > 0);
+            Assert.True(diagnostic.Column > 0);
+
+            var output = await File.ReadAllTextAsync(
+                Path.Combine(root, "Model.cs"));
+            Assert.Contains("public MissingType Value { get; set; }", output);
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task CompileAsync_AmbiguousType_WarnsAndQualifiesDeterministicSelection()
+    {
+        var root = Path.Combine(
+            Path.GetTempPath(),
+            "tinycs-ambiguous-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(Path.Combine(root, "A"));
+        Directory.CreateDirectory(Path.Combine(root, "B"));
+        Directory.CreateDirectory(Path.Combine(root, "Models"));
+
+        try
+        {
+            var projectPath = Path.Combine(root, "Example.csproj");
+            await File.WriteAllTextAsync(
+                projectPath,
+                "<Project><PropertyGroup><TargetFramework>net10.0</TargetFramework><RootNamespace>Example</RootNamespace></PropertyGroup></Project>");
+            await File.WriteAllTextAsync(
+                Path.Combine(root, "A", "Team.tcs"),
+                "pc Team => Id");
+            await File.WriteAllTextAsync(
+                Path.Combine(root, "B", "Team.tcs"),
+                "pc Team => Id");
+            await File.WriteAllTextAsync(
+                Path.Combine(root, "Models", "Match.tcs"),
+                "pc Match => HomeTeam:Team");
+
+            var result = await new TinyProjectCompiler().CompileAsync(projectPath);
+
+            Assert.True(result.Success);
+            var diagnostic = Assert.Single(
+                result.Diagnostics,
+                diagnostic => diagnostic.Code == "TCS2001");
+            Assert.Contains("Example.A.Team", diagnostic.Message);
+            Assert.Contains("Example.B.Team", diagnostic.Message);
+
+            var output = await File.ReadAllTextAsync(
+                Path.Combine(root, "Models", "Match.cs"));
+            Assert.Contains(
+                "public Example.A.Team HomeTeam { get; set; }",
+                output);
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
     public async Task CompileAsync_OverwritesSiblingCs_AndInfersNamespace()
     {
         var root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
