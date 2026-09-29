@@ -1,0 +1,4 @@
+<Project>
+  <Import Project="$(MSBuildThisFileDirectory)build/TinyCSharp.Build.targets"
+          Condition="Exists('$(MSBuildThisFileDirectory)build/TinyCSharp.Build.targets')" />
+</Project>
