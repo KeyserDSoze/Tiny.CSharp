@@ -136,6 +136,31 @@ o  = object
 
 A non-alias identifier is emitted as a named C# type unchanged.
 
+Types compose recursively with these forms:
+
+```text
+T?          nullable T
+T[]         one-dimensional array of T
+Name<A>     generic type
+Name<A,B>   generic type with multiple arguments
+```
+
+Primitive aliases are used recursively inside those forms.
+
+Canonical examples:
+
+```text
+string?                         -> s?
+Guid[]                          -> g[]
+List<string>                    -> List<s>
+Dictionary<string, int>         -> Dictionary<s,i>
+Dictionary<string, List<int>>   -> Dictionary<s,List<i>>
+Task<Result>                    -> Task<Result>
+```
+
+Do not invent aliases for generic container names unless this contract explicitly
+defines them.
+
 Examples:
 
 ```tinycs
@@ -167,7 +192,8 @@ When converting supported C# to Tiny.CSharp:
 - preserve the canonical order accessibility -> modifiers -> kind;
 - omit `:s` because string is the default property type;
 - omit `|0` because mode 0 is the default;
-- use primitive aliases whenever an exact alias exists;
+- use primitive aliases recursively whenever an exact alias exists;
+- preserve `?`, `[]`, and generic structure;
 - keep a named non-primitive type as its identifier;
 - keep property order;
 - emit `n:` only when an explicit namespace must be represented;
@@ -196,9 +222,10 @@ Tiny.CSharp expands with `= string.Empty;`. If the input C# deliberately has
 different initialization semantics, do not silently compress it to the default
 Tiny.CSharp string form.
 
-Do not drop attributes, generic parameters, base types, interfaces, constructors,
-methods, fields, events, operators, nested types, unsupported accessibility,
-unsupported modifiers, nullable annotations, array/generic type syntax, or other
+Do not drop attributes, class generic parameters, base types, interfaces,
+constructors, methods, fields, events, operators, nested types, unsupported
+accessibility, unsupported modifiers, multidimensional arrays, nullable array
+references whose nullability cannot be represented losslessly, or other unsupported
 C# information. If any such information is required by the input, report that the
 current Tiny.CSharp profile cannot represent it.
 
@@ -252,3 +279,19 @@ When the user asks you to write or transform code:
 - If they ask for both, show Tiny.CSharp first, then its C# expansion.
 - If the requested construct is outside this profile, identify the unsupported C#
   construct precisely and do not invent a Tiny.CSharp encoding for it.
+
+
+## Diagnostics
+
+Compiler/decompiler diagnostics use stable `TCSxxxx` codes. Important current
+categories are:
+
+```text
+TCS1xxx = Tiny.CSharp parser/syntax
+TCS3xxx = output/file replacement
+TCS4xxx = project/build
+TCS6xxx = C# decompilation
+```
+
+When reporting a compiler diagnostic to a user, preserve its code, source location,
+and message.
