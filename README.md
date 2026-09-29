@@ -367,8 +367,14 @@ Tiny.CSharp diagnostics use stable category-based codes:
 | `TCS5xxx` | internal compiler diagnostics |
 | `TCS6xxx` | C# decompilation and unsupported C# constructs |
 
-Example:
+Examples:
 
 ```text
 User.tcs(2,18): Error TCS1008: Invalid Tiny.CSharp type syntax 'List<s'.
+User.tcs(1,20): Error TCS1009: Property 'Id' is declared more than once.
+Model.tcs(2,3): Error TCS2007: Using namespace 'Missing.Namespace' could not be resolved in the project symbol universe.
 ```
+
+Namespace inference may also emit warning `TCS2006` when a folder segment must be
+normalized into a valid C# namespace identifier. Warnings are printed by the CLI
+even when compilation succeeds.
