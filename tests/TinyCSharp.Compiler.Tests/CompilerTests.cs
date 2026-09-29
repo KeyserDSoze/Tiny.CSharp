@@ -181,11 +181,11 @@ public sealed class CompilerTests
                 projectPath,
                 "<Project><PropertyGroup><TargetFramework>net10.0</TargetFramework><RootNamespace>Example</RootNamespace></PropertyGroup></Project>");
             await File.WriteAllTextAsync(
-                Path.Combine(root, "Contracts", "Result.cs"),
-                "namespace Example.Contracts; public class Result { }");
+                Path.Combine(root, "Contracts", "HandwrittenResolutionContract.cs"),
+                "namespace Example.Contracts; public class HandwrittenResolutionContract { }");
             await File.WriteAllTextAsync(
                 Path.Combine(root, "Models", "Model.tcs"),
-                "pc Model => Value:Result");
+                "pc Model => Value:HandwrittenResolutionContract");
 
             var result = await new TinyProjectCompiler().CompileAsync(projectPath);
 
@@ -193,7 +193,9 @@ public sealed class CompilerTests
             var output = await File.ReadAllTextAsync(
                 Path.Combine(root, "Models", "Model.cs"));
             Assert.Contains("using Example.Contracts;", output);
-            Assert.Contains("public Result Value { get; set; }", output);
+            Assert.Contains(
+                "public HandwrittenResolutionContract Value { get; set; }",
+                output);
         }
         finally
         {
