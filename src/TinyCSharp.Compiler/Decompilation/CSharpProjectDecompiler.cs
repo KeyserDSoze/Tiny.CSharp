@@ -27,28 +27,29 @@ public sealed class CSharpProjectDecompiler
 
         var sourceFiles = Directory
             .EnumerateFiles(projectDirectory, "*.cs", SearchOption.AllDirectories)
-            .Where(path => !IsExcludedPath(projectDirectory, path))
-            .Where(path => !File.Exists(Path.ChangeExtension(path, ".tcs")))
+            .Where(path => !IsExcludedDirectory(projectDirectory, path))
             .OrderBy(path => path, StringComparer.Ordinal)
             .ToArray();
 
         var sourceDocuments = new List<CSharpSourceDocument>();
+        var outputCandidates = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var sourceFile in sourceFiles)
         {
-            var source = await File.ReadAllTextAsync(sourceFile, cancellationToken);
+            var fullPath = Path.GetFullPath(sourceFile);
+            var source = await File.ReadAllTextAsync(fullPath, cancellationToken);
 
-            if (IsGeneratedSource(source))
+            sourceDocuments.Add(new CSharpSourceDocument(fullPath, source));
+
+            if (!IsGeneratedFileName(fullPath) &&
+                !IsGeneratedSource(source) &&
+                !File.Exists(Path.ChangeExtension(fullPath, ".tcs")))
             {
-                continue;
+                outputCandidates.Add(fullPath);
             }
-
-            sourceDocuments.Add(new CSharpSourceDocument(
-                Path.GetFullPath(sourceFile),
-                source));
         }
 
-        if (sourceDocuments.Count == 0)
+        if (outputCandidates.Count == 0)
         {
             return new CSharpProjectDecompilationResult(
                 true,
@@ -65,6 +66,11 @@ public sealed class CSharpProjectDecompiler
         foreach (var sourceDocument in sourceDocuments)
         {
             cancellationToken.ThrowIfCancellationRequested();
+
+            if (!outputCandidates.Contains(sourceDocument.FilePath))
+            {
+                continue;
+            }
 
             var result = decompiler.Decompile(
                 semanticCompilation,
@@ -108,7 +114,7 @@ public sealed class CSharpProjectDecompiler
             diagnostics);
     }
 
-    private static bool IsExcludedPath(
+    private static bool IsExcludedDirectory(
         string projectDirectory,
         string filePath)
     {
@@ -124,6 +130,11 @@ public sealed class CSharpProjectDecompiler
             return true;
         }
 
+        return false;
+    }
+
+    private static bool IsGeneratedFileName(string filePath)
+    {
         var fileName = Path.GetFileName(filePath);
 
         return fileName.EndsWith(".g.cs", StringComparison.OrdinalIgnoreCase) ||
@@ -148,7 +159,7 @@ public sealed class CSharpProjectDecompiler
             {
                 new CSharpProjectDecompilationDiagnostic(
                     filePath,
-                    TinyDiagnosticCodes.UnsupportedCSharpConstruct,
+                    TinyDiagnosticCodes.ProjectDecompilationFailure,
                     message,
                     1,
                     1)
