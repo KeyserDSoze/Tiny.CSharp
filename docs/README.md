@@ -10,6 +10,11 @@ constructs.
 - [Type resolution](architecture/type-resolution.md) — project symbol indexing,
   deterministic candidate priority, automatic imports, and diagnostics.
 
+## Benchmarking
+
+- [Token efficiency](benchmarking/token-efficiency.md) — deterministic tokenizer
+  baselines and the acceptance policy for new shorthand.
+
 ## Language contract
 
 The executable language profile is documented in the root [README](../README.md).
