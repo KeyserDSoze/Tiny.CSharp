@@ -41,3 +41,7 @@ jobs:
     - name: Run token benchmark
       run: dotnet run --project src/TinyCSharp.Compiler/TinyCSharp.Compiler.csproj --no-build -- benchmark samples/TinyCSharp.Sample/Match.cs
       working-directory: ${{ github.workspace }}
+
+    - name: Run project token benchmark
+      run: dotnet run --project src/TinyCSharp.Compiler/TinyCSharp.Compiler.csproj --no-build -- benchmark-project samples/TinyCSharp.BenchmarkCorpus/TinyCSharp.BenchmarkCorpus.csproj
+      working-directory: ${{ github.workspace }}
