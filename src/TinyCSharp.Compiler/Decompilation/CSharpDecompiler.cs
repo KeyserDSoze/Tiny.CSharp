@@ -693,7 +693,8 @@ public sealed class CSharpDecompiler
     {
         var resolvedNamespace = type.ResolvedNamespace;
 
-        return !string.IsNullOrWhiteSpace(resolvedNamespace) &&
+        return resolvedNamespace is not null &&
+               resolvedNamespace.Length > 0 &&
                type.Name.StartsWith(
                    resolvedNamespace + ".",
                    StringComparison.Ordinal);
