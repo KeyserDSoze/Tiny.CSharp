@@ -339,6 +339,47 @@ Tiny.CSharp/
     └── TinyCSharp.IntegrationTests/
 ```
 
+
+## Token benchmark
+
+Tiny.CSharp measures token efficiency with real Tiktoken encodings instead of
+assuming that fewer characters means fewer model tokens.
+
+Benchmark a supported C# file with:
+
+```bash
+dotnet run --project src/TinyCSharp.Compiler -- benchmark path/to/Model.cs
+```
+
+The default benchmark runs both:
+
+```text
+o200k_base
+cl100k_base
+```
+
+An explicit subset can be selected:
+
+```bash
+dotnet run --project src/TinyCSharp.Compiler -- benchmark Model.cs o200k_base
+```
+
+For every encoding, the report compares Tiny.CSharp against two baselines:
+
+- **source C#** — the input file exactly as supplied, including its real formatting;
+- **canonical C#** — C# regenerated from the same canonical Tiny model, without the
+  generated-file header.
+
+The second baseline isolates language/syntax compression from savings caused only by
+comments or formatting differences.
+
+The benchmark engine uses `Microsoft.ML.Tokenizers` Tiktoken data packages pinned
+in the compiler project. Encoding names are recorded explicitly so results remain
+reproducible even if model-to-encoding mappings change later.
+
+See [token-efficiency benchmarking](docs/benchmarking/token-efficiency.md) for the
+project policy used when evaluating new shorthand.
+
 ## Development
 
 The repository targets .NET 10.
