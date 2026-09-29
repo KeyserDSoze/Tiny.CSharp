@@ -5,6 +5,7 @@ using TinyCSharp.Compiler.Decompilation;
 using TinyCSharp.Compiler.Diagnostics;
 using TinyCSharp.Compiler.Language;
 using TinyCSharp.Compiler.Parsing;
+using TinyCSharp.Compiler.Projects;
 
 namespace TinyCSharp.Compiler.Symbols;
 
@@ -13,7 +14,7 @@ public sealed class TinyProjectTypeResolver
     private const string TinyStubPrefix = "__tiny_stub__/";
 
     public async Task<IReadOnlyList<TinyDiagnostic>> ResolveAsync(
-        string projectDirectory,
+        string projectPath,
         IReadOnlyList<TinySyntaxTree> documents,
         bool emitAutomaticUsings = true,
         CancellationToken cancellationToken = default)
@@ -26,13 +27,63 @@ public sealed class TinyProjectTypeResolver
             return Array.Empty<TinyDiagnostic>();
         }
 
+        projectPath = Path.GetFullPath(projectPath);
+        var projectDirectory = Path.GetDirectoryName(projectPath) ?? string.Empty;
+        var diagnostics = new List<TinyDiagnostic>();
+        var graph = new TinyProjectReferenceGraph().Load(projectPath);
+        var rootNode = graph.First(node =>
+            string.Equals(
+                node.ProjectPath,
+                projectPath,
+                StringComparison.OrdinalIgnoreCase));
+
+        var metadataLoader = new TinyProjectMetadataReferenceLoader();
+        var metadataByPath = new Dictionary<string, TinyMetadataReferenceInfo>(
+            StringComparer.OrdinalIgnoreCase);
+
+        foreach (var node in graph)
+        {
+            var metadataResult = metadataLoader.Load(
+                node.ProjectPath,
+                warnWhenAssetsMissing: node.Depth == 0);
+
+            if (node.Depth == 0)
+            {
+                diagnostics.AddRange(metadataResult.Diagnostics);
+            }
+
+            foreach (var reference in metadataResult.References)
+            {
+                var effectiveReference = reference with
+                {
+                    IsDirect = node.Depth == 0 && reference.IsDirect
+                };
+
+                if (!metadataByPath.TryGetValue(
+                        effectiveReference.Path,
+                        out var existing) ||
+                    (!existing.IsDirect && effectiveReference.IsDirect))
+                {
+                    metadataByPath[effectiveReference.Path] = effectiveReference;
+                }
+            }
+        }
+
+        var metadataReferences = metadataByPath.Values
+            .Select(reference =>
+                MetadataReference.CreateFromFile(reference.Path))
+            .ToArray();
+        var externalKinds = BuildExternalAssemblyKindMap(
+            metadataByPath.Values);
+
         var sourceDocuments = new List<CSharpSourceDocument>();
-        var tinyStubPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var tinyStubPaths = new HashSet<string>(
+            StringComparer.OrdinalIgnoreCase);
 
         for (var i = 0; i < documents.Count; i++)
         {
             var document = documents[i];
-            var stubPath = $"{TinyStubPrefix}{i}-{document.ClassName}.cs";
+            var stubPath = $"{TinyStubPrefix}current/{i}-{document.ClassName}.cs";
 
             tinyStubPaths.Add(stubPath);
             sourceDocuments.Add(new CSharpSourceDocument(
@@ -42,15 +93,69 @@ public sealed class TinyProjectTypeResolver
 
         foreach (var csharpPath in DiscoverHandwrittenCSharp(projectDirectory))
         {
-            var source = await File.ReadAllTextAsync(csharpPath, cancellationToken);
-            sourceDocuments.Add(new CSharpSourceDocument(csharpPath, source));
+            var source = await File.ReadAllTextAsync(
+                csharpPath,
+                cancellationToken);
+            sourceDocuments.Add(new CSharpSourceDocument(
+                csharpPath,
+                source));
         }
 
-        var semanticCompilation = CSharpSemanticCompilation.Create(sourceDocuments);
-        var index = BuildTypeIndex(
-            semanticCompilation.Compilation,
-            tinyStubPaths);
-        var diagnostics = new List<TinyDiagnostic>();
+        var semanticCompilation = CSharpSemanticCompilation.Create(
+            sourceDocuments,
+            metadataReferences,
+            rootNode.AssemblyName);
+        var index = new Dictionary<TypeKey, List<TypeCandidate>>();
+
+        VisitNamespace(
+            semanticCompilation.Compilation.Assembly.GlobalNamespace,
+            allowInternal: true,
+            type => GetCurrentProjectSourceKind(
+                type,
+                tinyStubPaths),
+            index);
+
+        foreach (var assembly in semanticCompilation
+                     .Compilation
+                     .SourceModule
+                     .ReferencedAssemblySymbols
+                     .GroupBy(
+                         symbol => symbol.Identity.ToString(),
+                         StringComparer.Ordinal)
+                     .Select(group => group.First()))
+        {
+            var sourceKind = externalKinds.TryGetValue(
+                assembly.Identity.Name,
+                out var externalKind)
+                ? externalKind
+                : TinyTypeSourceKind.Framework;
+
+            VisitNamespace(
+                assembly.GlobalNamespace,
+                allowInternal: false,
+                _ => sourceKind,
+                index);
+        }
+
+        foreach (var node in graph.Where(node => node.Depth > 0))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var referencedCompilation = await CreateReferencedProjectCompilationAsync(
+                node,
+                metadataReferences,
+                cancellationToken);
+
+            VisitNamespace(
+                referencedCompilation.Compilation.Assembly.GlobalNamespace,
+                allowInternal: false,
+                _ => node.Depth == 1
+                    ? TinyTypeSourceKind.DirectProjectReference
+                    : TinyTypeSourceKind.TransitiveProjectReference,
+                index);
+        }
+
+        var frozenIndex = FreezeIndex(index);
 
         foreach (var document in documents)
         {
@@ -60,13 +165,88 @@ public sealed class TinyProjectTypeResolver
                     property.Type,
                     property,
                     document,
-                    index,
+                    frozenIndex,
                     diagnostics,
                     emitAutomaticUsings);
             }
         }
 
         return diagnostics;
+    }
+
+    private static async Task<CSharpSemanticCompilation>
+        CreateReferencedProjectCompilationAsync(
+            TinyProjectReferenceNode node,
+            IReadOnlyList<MetadataReference> metadataReferences,
+            CancellationToken cancellationToken)
+    {
+        var projectDirectory =
+            Path.GetDirectoryName(node.ProjectPath) ?? string.Empty;
+        var sources = new List<CSharpSourceDocument>();
+        var index = 0;
+
+        foreach (var tcsPath in Directory
+                     .EnumerateFiles(
+                         projectDirectory,
+                         "*.tcs",
+                         SearchOption.AllDirectories)
+                     .Where(path =>
+                         !IsBuildOutputPath(projectDirectory, path))
+                     .OrderBy(path => path, StringComparer.Ordinal))
+        {
+            var source = await File.ReadAllTextAsync(
+                tcsPath,
+                cancellationToken);
+            var tree = new TinyParser().Parse(source, tcsPath);
+
+            if (!tree.IsValid)
+            {
+                continue;
+            }
+
+            if (string.IsNullOrWhiteSpace(tree.Namespace))
+            {
+                tree.Namespace = InferNamespace(
+                    node.RootNamespace,
+                    projectDirectory,
+                    tcsPath);
+            }
+
+            sources.Add(new CSharpSourceDocument(
+                $"{TinyStubPrefix}reference/{node.Depth}/{index++}-{tree.ClassName}.cs",
+                CreateDeclarationStub(tree)));
+        }
+
+        foreach (var csharpPath in DiscoverHandwrittenCSharp(projectDirectory))
+        {
+            var source = await File.ReadAllTextAsync(
+                csharpPath,
+                cancellationToken);
+            sources.Add(new CSharpSourceDocument(
+                csharpPath,
+                source));
+        }
+
+        return CSharpSemanticCompilation.Create(
+            sources,
+            metadataReferences,
+            node.AssemblyName);
+    }
+
+    private static Dictionary<string, TinyTypeSourceKind>
+        BuildExternalAssemblyKindMap(
+            IEnumerable<TinyMetadataReferenceInfo> references)
+    {
+        return references
+            .GroupBy(
+                reference => reference.AssemblyName,
+                StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(
+                group => group.Key,
+                group => group.Any(reference => reference.IsDirect)
+                    ? TinyTypeSourceKind.DirectExternalAssembly
+                    : TinyTypeSourceKind.TransitiveExternalAssembly,
+                StringComparer.OrdinalIgnoreCase);
     }
 
     private static bool NeedsResolution(TinyType type)
@@ -106,7 +286,9 @@ public sealed class TinyProjectTypeResolver
             return type;
         }
 
-        var key = new TypeKey(type.Name, type.TypeArguments.Count);
+        var key = new TypeKey(
+            type.Name,
+            type.TypeArguments.Count);
 
         if (!index.TryGetValue(key, out var candidates) ||
             candidates.Count == 0)
@@ -137,16 +319,16 @@ public sealed class TinyProjectTypeResolver
                     StringComparer.Ordinal)
                     ? 0
                     : 1)
-            .ThenBy(candidate => candidate.SourceKind switch
-            {
-                TinyTypeSourceKind.Tiny => 0,
-                TinyTypeSourceKind.CSharp => 1,
-                TinyTypeSourceKind.Framework => 2,
-                _ => 3
-            })
-            .ThenBy(candidate => candidate.Namespace, StringComparer.Ordinal)
-            .ThenBy(candidate => candidate.QualifiedName, StringComparer.Ordinal)
-            .ThenBy(candidate => candidate.Origin, StringComparer.Ordinal)
+            .ThenBy(candidate => GetSourcePriority(candidate.SourceKind))
+            .ThenBy(
+                candidate => candidate.Namespace,
+                StringComparer.Ordinal)
+            .ThenBy(
+                candidate => candidate.QualifiedName,
+                StringComparer.Ordinal)
+            .ThenBy(
+                candidate => candidate.Origin,
+                StringComparer.Ordinal)
             .ToArray();
 
         var selected = orderedCandidates[0];
@@ -167,8 +349,6 @@ public sealed class TinyProjectTypeResolver
                 property.TypeColumn,
                 Code: TinyDiagnosticCodes.AmbiguousType));
 
-            // Fully qualify an ambiguous selection so generated C# is deterministic
-            // even if multiple conflicting imports are present.
             return type with
             {
                 Name = selected.QualifiedName,
@@ -205,34 +385,34 @@ public sealed class TinyProjectTypeResolver
         };
     }
 
-    private static IReadOnlyDictionary<TypeKey, IReadOnlyList<TypeCandidate>> BuildTypeIndex(
-        Microsoft.CodeAnalysis.CSharp.CSharpCompilation compilation,
-        ISet<string> tinyStubPaths)
+    private static int GetSourcePriority(
+        TinyTypeSourceKind sourceKind)
     {
-        var index = new Dictionary<TypeKey, List<TypeCandidate>>();
-
-        VisitNamespace(
-            compilation.Assembly.GlobalNamespace,
-            currentAssembly: true,
-            tinyStubPaths,
-            index);
-
-        foreach (var assembly in compilation.SourceModule.ReferencedAssemblySymbols
-                     .GroupBy(symbol => symbol.Identity.ToString(), StringComparer.Ordinal)
-                     .Select(group => group.First()))
+        return sourceKind switch
         {
-            VisitNamespace(
-                assembly.GlobalNamespace,
-                currentAssembly: false,
-                tinyStubPaths,
-                index);
-        }
+            TinyTypeSourceKind.Tiny => 0,
+            TinyTypeSourceKind.CSharp => 1,
+            TinyTypeSourceKind.DirectProjectReference => 2,
+            TinyTypeSourceKind.TransitiveProjectReference => 3,
+            TinyTypeSourceKind.DirectExternalAssembly => 4,
+            TinyTypeSourceKind.TransitiveExternalAssembly => 5,
+            TinyTypeSourceKind.Framework => 6,
+            _ => 7
+        };
+    }
 
+    private static IReadOnlyDictionary<TypeKey, IReadOnlyList<TypeCandidate>>
+        FreezeIndex(
+            IReadOnlyDictionary<TypeKey, List<TypeCandidate>> index)
+    {
         return index.ToDictionary(
             pair => pair.Key,
             pair => (IReadOnlyList<TypeCandidate>)pair.Value
                 .GroupBy(
-                    candidate => candidate.QualifiedName + "|" + candidate.Origin,
+                    candidate =>
+                        candidate.QualifiedName + "|" +
+                        candidate.Origin + "|" +
+                        candidate.SourceKind,
                     StringComparer.Ordinal)
                 .Select(group => group.First())
                 .ToArray());
@@ -240,16 +420,16 @@ public sealed class TinyProjectTypeResolver
 
     private static void VisitNamespace(
         INamespaceSymbol namespaceSymbol,
-        bool currentAssembly,
-        ISet<string> tinyStubPaths,
+        bool allowInternal,
+        Func<INamedTypeSymbol, TinyTypeSourceKind> sourceKindSelector,
         IDictionary<TypeKey, List<TypeCandidate>> index)
     {
         foreach (var type in namespaceSymbol.GetTypeMembers())
         {
             VisitType(
                 type,
-                currentAssembly,
-                tinyStubPaths,
+                allowInternal,
+                sourceKindSelector,
                 index);
         }
 
@@ -257,28 +437,26 @@ public sealed class TinyProjectTypeResolver
         {
             VisitNamespace(
                 childNamespace,
-                currentAssembly,
-                tinyStubPaths,
+                allowInternal,
+                sourceKindSelector,
                 index);
         }
     }
 
     private static void VisitType(
         INamedTypeSymbol type,
-        bool currentAssembly,
-        ISet<string> tinyStubPaths,
+        bool allowInternal,
+        Func<INamedTypeSymbol, TinyTypeSourceKind> sourceKindSelector,
         IDictionary<TypeKey, List<TypeCandidate>> index)
     {
         if (type.CanBeReferencedByName &&
-            IsAccessible(type, currentAssembly))
+            IsAccessible(type, allowInternal))
         {
-            var sourceKind = currentAssembly
-                ? GetCurrentProjectSourceKind(type, tinyStubPaths)
-                : TinyTypeSourceKind.Framework;
-            var namespaceName = type.ContainingNamespace is null ||
-                                type.ContainingNamespace.IsGlobalNamespace
-                ? string.Empty
-                : type.ContainingNamespace.ToDisplayString();
+            var namespaceName =
+                type.ContainingNamespace is null ||
+                type.ContainingNamespace.IsGlobalNamespace
+                    ? string.Empty
+                    : type.ContainingNamespace.ToDisplayString();
             var candidate = new TypeCandidate(
                 type.Name,
                 GetQualifiedName(type),
@@ -286,10 +464,11 @@ public sealed class TinyProjectTypeResolver
                 type.Arity,
                 type.TypeKind,
                 type.DeclaredAccessibility,
-                sourceKind,
+                sourceKindSelector(type),
                 type.ContainingAssembly?.Identity.Name ?? string.Empty);
-
-            var key = new TypeKey(candidate.Name, candidate.Arity);
+            var key = new TypeKey(
+                candidate.Name,
+                candidate.Arity);
 
             if (!index.TryGetValue(key, out var bucket))
             {
@@ -304,18 +483,19 @@ public sealed class TinyProjectTypeResolver
         {
             VisitType(
                 nestedType,
-                currentAssembly,
-                tinyStubPaths,
+                allowInternal,
+                sourceKindSelector,
                 index);
         }
     }
 
     private static bool IsAccessible(
         INamedTypeSymbol type,
-        bool currentAssembly)
+        bool allowInternal)
     {
-        var allowed = currentAssembly
-            ? type.DeclaredAccessibility is Accessibility.Public or Accessibility.Internal
+        var allowed = allowInternal
+            ? type.DeclaredAccessibility is
+                Accessibility.Public or Accessibility.Internal
             : type.DeclaredAccessibility == Accessibility.Public;
 
         if (!allowed)
@@ -327,7 +507,7 @@ public sealed class TinyProjectTypeResolver
 
         while (containingType is not null)
         {
-            if (currentAssembly)
+            if (allowInternal)
             {
                 if (containingType.DeclaredAccessibility is not
                     (Accessibility.Public or Accessibility.Internal))
@@ -354,7 +534,8 @@ public sealed class TinyProjectTypeResolver
         {
             var path = location.SourceTree?.FilePath;
 
-            if (path is not null && tinyStubPaths.Contains(path))
+            if (path is not null &&
+                tinyStubPaths.Contains(path))
             {
                 return TinyTypeSourceKind.Tiny;
             }
@@ -363,7 +544,8 @@ public sealed class TinyProjectTypeResolver
         return TinyTypeSourceKind.CSharp;
     }
 
-    private static string GetQualifiedName(INamedTypeSymbol type)
+    private static string GetQualifiedName(
+        INamedTypeSymbol type)
     {
         var typeNames = new Stack<string>();
         INamedTypeSymbol? current = type;
@@ -374,10 +556,11 @@ public sealed class TinyProjectTypeResolver
             current = current.ContainingType;
         }
 
-        var namespaceName = type.ContainingNamespace is null ||
-                            type.ContainingNamespace.IsGlobalNamespace
-            ? string.Empty
-            : type.ContainingNamespace.ToDisplayString();
+        var namespaceName =
+            type.ContainingNamespace is null ||
+            type.ContainingNamespace.IsGlobalNamespace
+                ? string.Empty
+                : type.ContainingNamespace.ToDisplayString();
         var typeName = string.Join(".", typeNames);
 
         return string.IsNullOrWhiteSpace(namespaceName)
@@ -393,9 +576,13 @@ public sealed class TinyProjectTypeResolver
                 projectDirectory,
                 "*.cs",
                 SearchOption.AllDirectories)
-            .Where(path => !IsBuildOutputPath(projectDirectory, path))
-            .Where(path => !File.Exists(Path.ChangeExtension(path, ".tcs")))
-            .OrderBy(path => path, StringComparer.Ordinal)
+            .Where(path =>
+                !IsBuildOutputPath(projectDirectory, path))
+            .Where(path =>
+                !File.Exists(Path.ChangeExtension(path, ".tcs")))
+            .OrderBy(
+                path => path,
+                StringComparer.Ordinal)
             .Select(Path.GetFullPath);
     }
 
@@ -403,17 +590,90 @@ public sealed class TinyProjectTypeResolver
         string projectDirectory,
         string path)
     {
-        var relative = Path.GetRelativePath(projectDirectory, path);
+        var relative = Path.GetRelativePath(
+            projectDirectory,
+            path);
         var segments = relative.Split(
-            new[] { Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar },
+            new[]
+            {
+                Path.DirectorySeparatorChar,
+                Path.AltDirectorySeparatorChar
+            },
             StringSplitOptions.RemoveEmptyEntries);
 
         return segments.Any(segment =>
-            string.Equals(segment, "bin", StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(segment, "obj", StringComparison.OrdinalIgnoreCase));
+            string.Equals(
+                segment,
+                "bin",
+                StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(
+                segment,
+                "obj",
+                StringComparison.OrdinalIgnoreCase));
     }
 
-    private static string CreateDeclarationStub(TinyDocument document)
+    private static string InferNamespace(
+        string rootNamespace,
+        string projectDirectory,
+        string tcsFilePath)
+    {
+        var sourceDirectory =
+            Path.GetDirectoryName(tcsFilePath) ?? projectDirectory;
+        var relativeDirectory = Path.GetRelativePath(
+            projectDirectory,
+            sourceDirectory);
+
+        if (relativeDirectory == ".")
+        {
+            return rootNamespace;
+        }
+
+        var segments = relativeDirectory
+            .Split(
+                new[]
+                {
+                    Path.DirectorySeparatorChar,
+                    Path.AltDirectorySeparatorChar
+                },
+                StringSplitOptions.RemoveEmptyEntries)
+            .Select(NormalizeNamespaceSegment)
+            .Where(segment =>
+                !string.IsNullOrWhiteSpace(segment));
+
+        var suffix = string.Join('.', segments);
+
+        return string.IsNullOrWhiteSpace(suffix)
+            ? rootNamespace
+            : $"{rootNamespace}.{suffix}";
+    }
+
+    private static string NormalizeNamespaceSegment(
+        string segment)
+    {
+        if (string.IsNullOrWhiteSpace(segment))
+        {
+            return string.Empty;
+        }
+
+        var characters = segment
+            .Select(character =>
+                char.IsLetterOrDigit(character) ||
+                character == '_'
+                    ? character
+                    : '_')
+            .ToArray();
+        var normalized = new string(characters);
+
+        if (char.IsDigit(normalized[0]))
+        {
+            normalized = "_" + normalized;
+        }
+
+        return normalized;
+    }
+
+    private static string CreateDeclarationStub(
+        TinyDocument document)
     {
         var sb = new StringBuilder();
 
@@ -425,9 +685,11 @@ public sealed class TinyProjectTypeResolver
             sb.AppendLine();
         }
 
-        sb.Append(document.TypeDeclaration.Accessibility == TinyAccessibility.Public
-                ? "public"
-                : "internal")
+        sb.Append(
+                document.TypeDeclaration.Accessibility ==
+                TinyAccessibility.Public
+                    ? "public"
+                    : "internal")
             .Append(" class ")
             .Append(document.ClassName)
             .AppendLine(" { }");
@@ -453,6 +715,10 @@ public sealed class TinyProjectTypeResolver
     {
         Tiny,
         CSharp,
+        DirectProjectReference,
+        TransitiveProjectReference,
+        DirectExternalAssembly,
+        TransitiveExternalAssembly,
         Framework
     }
 }
