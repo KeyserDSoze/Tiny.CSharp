@@ -109,7 +109,7 @@ public sealed class TinyProjectCompiler
         {
             var resolver = new TinyProjectTypeResolver();
             resolutionDiagnostics = await resolver.ResolveAsync(
-                projectDirectory,
+                projectPath,
                 parsedFiles.Select(file => file.SyntaxTree).ToArray(),
                 options.EmitAutomaticUsings,
                 cancellationToken);
