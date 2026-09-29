@@ -157,36 +157,57 @@ psc Match => Result:MatchResult
 If `n:` is omitted, the compiler infers a namespace from the project root
 namespace and the relative directory containing the `.tcs` file.
 
+Directive rules are canonical and validated:
+
+- `n:` may appear at most once and must precede every `u:`;
+- namespace/import names must be valid dotted C# identifiers;
+- duplicate `u:` directives are removed;
+- explicit `u:` directives participate in type binding, not only code generation.
+
 
 ## Tiny.CSharp type resolution
 
 Compilation is project-oriented. All valid `.tcs` declarations are parsed before
 named property types are resolved.
 
-For a simple named type, the current resolver searches:
+For a simple named type, the resolver indexes:
 
 1. Tiny.CSharp declarations in the current project;
 2. handwritten C# declarations in the current project;
-3. framework assemblies available to Roslyn.
+3. direct `ProjectReference` projects;
+4. transitive `ProjectReference` projects;
+5. direct external/package assemblies;
+6. transitive external/package assemblies;
+7. framework assemblies available to Roslyn.
 
 Candidate priority is deterministic:
 
 1. same generated namespace;
-2. explicitly imported namespace;
+2. namespace selected by explicit `u:`;
 3. current-project Tiny.CSharp declaration;
 4. current-project handwritten C# declaration;
-5. framework type;
-6. namespace, qualified name, and assembly identity in ordinal order.
+5. direct project reference;
+6. transitive project reference;
+7. direct external assembly/package;
+8. transitive external assembly/package;
+9. framework type;
+10. namespace, qualified name, and assembly identity in ordinal order.
 
-A unique cross-namespace match produces an automatic `using`. If multiple
-accessible candidates exist, Tiny.CSharp emits warning `TCS2001`, selects the
-highest-priority candidate, and fully qualifies it in generated C# so the warning
-does not create a new C# ambiguity. If no candidate exists, warning `TCS2002` is
-emitted and the original type spelling is left unchanged for the standard C#
-compiler to validate.
+Same-namespace and explicit-import matches first narrow the candidate set. Therefore
+`u:Example.B` can resolve `Team` to `Example.B.Team` without producing
+`TCS2001` when that import identifies one candidate.
 
-Project-reference and NuGet assembly loading are the next resolver layer; the
-current symbol universe is current-project source plus trusted platform assemblies.
+A unique cross-namespace match produces an automatic `using`. If the effective
+candidate set still contains multiple accessible types, Tiny.CSharp emits warning
+`TCS2001`, selects the highest-priority candidate, and fully qualifies it in
+generated C# so the warning does not create a new C# ambiguity. If no candidate
+exists, warning `TCS2002` is emitted and the original type spelling is left
+unchanged for the standard C# compiler to validate.
+
+Project references are followed recursively. NuGet/package compile assemblies are
+loaded from the restored `obj/project.assets.json`, and explicit
+`<Reference><HintPath>...` assemblies are also indexed. The resolver does not scan
+arbitrary directories for DLLs.
 
 ## Compiler
 
@@ -279,10 +300,11 @@ currently provides. Today the project already has:
 - unit and end-to-end tests;
 - MSBuild integration and GitHub Actions.
 
-Important Foundation work still to be completed includes loading NuGet/project
-references into the semantic compilation, deeper namespace/import validation,
-additional C# type forms such as nullable array references, broader diagnostics
-coverage, broader test coverage, and token-efficiency benchmarking.
+Important Foundation work still to be completed includes full MSBuild-evaluated
+project graphs for conditional/multi-targeted references, semantic validation of
+imports against the complete evaluated symbol universe, additional C# type forms
+such as nullable array references, broader diagnostics/test coverage, and
+token-efficiency benchmarking.
 
 ## LLM system prompt
 
@@ -309,7 +331,9 @@ Tiny.CSharp/
 │   ├── Decompilation/             # Roslyn C# -> Tiny.CSharp
 │   ├── Generation/                # C# generator + Tiny formatter
 │   ├── Language/                  # Canonical language tokens/models
-│   └── Parsing/
+│   ├── Parsing/
+│   ├── Projects/                  # Project graph + evaluated metadata assets
+│   └── Symbols/                   # Project-wide type resolution
 └── tests/
     ├── TinyCSharp.Compiler.Tests/
     └── TinyCSharp.IntegrationTests/
