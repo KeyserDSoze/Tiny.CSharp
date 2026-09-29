@@ -325,3 +325,33 @@ Canonical behavior:
 Project conversion must use a separate output tree. Generated C# already owned by an
 existing sibling `.tcs` file may participate in semantic resolution but must not be
 re-emitted as a second Tiny.CSharp source.
+
+
+## Tiny.CSharp compiler type resolution
+
+When compiling a project, resolve simple named property types only after all valid
+`.tcs` files have been parsed.
+
+Current deterministic priority:
+
+```text
+1. same generated namespace
+2. explicitly imported namespace
+3. current-project Tiny.CSharp declaration
+4. current-project handwritten C# declaration
+5. framework type
+6. namespace / qualified name / assembly identity ordinal ordering
+```
+
+If exactly one candidate is selected from another namespace, add the required
+`u:`/C# using automatically unless automatic using generation is disabled.
+
+If multiple accessible candidates exist, preserve warning `TCS2001`, choose the
+deterministic highest-priority candidate, and use a fully qualified generated C#
+type so the generated source is not ambiguous.
+
+If no candidate exists, preserve warning `TCS2002`, keep the original type name
+unchanged, and allow the normal C# compiler to perform final validation.
+
+Do not treat a `TCS2001` or `TCS2002` warning as a compiler failure unless the
+caller explicitly enables warnings-as-errors.
