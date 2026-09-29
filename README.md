@@ -178,7 +178,13 @@ canonical Tiny.CSharp with Roslyn:
 ```bash
 dotnet run --project src/TinyCSharp.Compiler -- decompile path/to/Model.cs
 dotnet run --project src/TinyCSharp.Compiler -- decompile path/to/Model.cs path/to/Model.tcs
+dotnet run --project src/TinyCSharp.Compiler -- decompile-project path/to/App.csproj path/to/tiny-output
 ```
+
+`decompile-project` builds one Roslyn semantic context from the project's C# source
+files and writes supported Tiny.CSharp files into a separate output directory.
+Existing `.tcs`-owned generated C# files are retained as semantic input but are not
+emitted again, so they can resolve project types without creating conversion loops.
 
 The decompiler is intentionally strict. If the C# file contains semantics the
 current Tiny.CSharp profile cannot represent, conversion fails instead of silently
@@ -207,6 +213,12 @@ C# -> Tiny.CSharp is implemented with Roslyn rather than regular-expression
 replacement. Both directions share `TinyDocument`, the declaration codec, and
 the same canonical type-alias table.
 
+The decompiler now uses Roslyn semantic models when available. Resolved type symbols
+are used to remove unnecessary `using` directives, retain required namespaces, and
+detect genuinely ambiguous type names. If an application type cannot be resolved in
+single-file mode, its textual spelling and original imports are preserved rather
+than guessed.
+
 A round trip is judged by semantic equivalence for the supported subset, not by
 reproducing the original whitespace or formatting.
 
@@ -224,15 +236,18 @@ currently provides. Today the project already has:
 - compact public/internal class declarations with optional `sealed`;
 - a shared canonical `TinyDocument` model and centralized type aliases;
 - a Roslyn-based C# -> Tiny.CSharp decompiler for the supported subset;
+- reusable multi-file Roslyn semantic compilation and symbol resolution;
+- semantic `using` normalization plus ambiguous-type diagnostics;
+- project-level C# -> Tiny.CSharp conversion to a separate output tree;
 - a canonical Tiny.CSharp formatter;
 - C# -> Tiny -> C# round-trip tests;
 - unit and end-to-end tests;
 - MSBuild integration and GitHub Actions.
 
-Important Foundation work still to be completed includes project-wide symbol/type
-resolution, namespace/using semantic validation, additional C# type forms such as
-qualified generic names and nullable array references, broader diagnostics coverage,
-broader test coverage, and project-level C# -> Tiny.CSharp conversion.
+Important Foundation work still to be completed includes loading NuGet/project
+references into the semantic compilation, deeper namespace/import validation,
+additional C# type forms such as nullable array references, broader diagnostics
+coverage, broader test coverage, and token-efficiency benchmarking.
 
 ## LLM system prompt
 
