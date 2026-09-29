@@ -53,6 +53,55 @@ class CacheEntry
     }
 
     [Fact]
+    public void Decompile_CompositionalTypes_UsesRecursiveAliases()
+    {
+        const string source = """
+using System;
+using System.Collections.Generic;
+using System.Threading.Tasks;
+
+public class Types
+{
+    public string? Maybe { get; set; }
+    public Guid[] Ids { get; set; }
+    public List<string> Names { get; set; }
+    public Dictionary<string, List<int>> Map { get; set; }
+    public Task<Result> Work { get; init; }
+}
+""";
+
+        var result = new CSharpDecompiler().Decompile(source);
+        Assert.True(result.Success);
+
+        var tiny = new TinyFormatter().Format(result.Document!);
+
+        Assert.Contains("Maybe:s?", tiny);
+        Assert.Contains("Ids:g[]", tiny);
+        Assert.Contains("Names:List<s>", tiny);
+        Assert.Contains("Map:Dictionary<s,List<i>>", tiny);
+        Assert.Contains("Work:Task<Result>|1", tiny);
+    }
+
+    [Fact]
+    public void Decompile_UnsupportedConstruct_ReportsStableDiagnosticCode()
+    {
+        const string source = """
+public class User
+{
+    public void Save() { }
+}
+""";
+
+        var result = new CSharpDecompiler().Decompile(source);
+
+        Assert.False(result.Success);
+        var diagnostic = Assert.Single(result.Diagnostics);
+        Assert.Equal("TCS6002", diagnostic.Code);
+        Assert.True(diagnostic.Line > 0);
+        Assert.True(diagnostic.Column > 0);
+    }
+
+    [Fact]
     public void Decompile_RejectsUnsupportedMembers_InsteadOfDroppingThem()
     {
         const string source = """
