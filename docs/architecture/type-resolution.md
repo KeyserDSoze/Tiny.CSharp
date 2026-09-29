@@ -104,3 +104,20 @@ It does not scan arbitrary DLL directories.
 direct-package classification still starts from static project XML. The next layer
 is full MSBuild evaluation for conditional items, properties, target-framework
 selection, central package management edge cases, and other build-graph semantics.
+
+
+## Explicit import validation
+
+`u:` directives are validated twice:
+
+1. parser validation checks canonical dotted C# namespace syntax;
+2. semantic validation checks that the namespace exists in the assembled project,
+   project-reference, package/external, or framework symbol universe.
+
+A missing semantic namespace produces `TCS2007` at the exact `u:` source
+location. Because this is an error, generation for that file is skipped and an
+existing sibling C# file remains untouched.
+
+Duplicate `u:` directives are canonicalized to one import. A single explicit
+import that uniquely identifies a candidate narrows type binding and suppresses
+`TCS2001` for that name.
