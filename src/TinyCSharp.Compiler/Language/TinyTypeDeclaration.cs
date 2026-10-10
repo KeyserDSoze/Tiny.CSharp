@@ -8,7 +8,8 @@ public enum TinyAccessibility
 
 public enum TinyTypeKind
 {
-    Class
+    Class,
+    Record
 }
 
 public sealed record TinyTypeDeclaration(
@@ -18,6 +19,8 @@ public sealed record TinyTypeDeclaration(
     bool IsPartial,
     TinyTypeKind Kind)
 {
+    public bool IsStatic { get; init; }
+
     public static TinyTypeDeclaration PublicSealedClass { get; } =
         new(
             TinyAccessibility.Public,
@@ -46,7 +49,9 @@ public sealed record TinyTypeDeclaration(
         };
 
         if (accessibility is null ||
-            token[^1] != 'c')
+            !TryParseKind(
+                token[^1],
+                out var kind))
         {
             return false;
         }
@@ -59,23 +64,39 @@ public sealed record TinyTypeDeclaration(
                 modifierToken,
                 out var isAbstract,
                 out var isSealed,
+                out var isStatic,
                 out var isPartial))
         {
             return false;
         }
 
-        declaration = new TinyTypeDeclaration(
+        var parsed = new TinyTypeDeclaration(
             accessibility.Value,
             isAbstract,
             isSealed,
             isPartial,
-            TinyTypeKind.Class);
+            kind)
+        {
+            IsStatic = isStatic
+        };
 
+        if (!parsed.IsValidCombination())
+        {
+            return false;
+        }
+
+        declaration = parsed;
         return true;
     }
 
     public string ToToken()
     {
+        if (!IsValidCombination())
+        {
+            throw new InvalidOperationException(
+                "The Tiny.CSharp type declaration contains an invalid modifier/kind combination.");
+        }
+
         var accessibility = Accessibility switch
         {
             TinyAccessibility.Public => "p",
@@ -94,6 +115,10 @@ public sealed record TinyTypeDeclaration(
         {
             modifiers += "s";
         }
+        else if (IsStatic)
+        {
+            modifiers += "t";
+        }
 
         if (IsPartial)
         {
@@ -103,6 +128,7 @@ public sealed record TinyTypeDeclaration(
         var kind = Kind switch
         {
             TinyTypeKind.Class => "c",
+            TinyTypeKind.Record => "r",
             _ => throw new InvalidOperationException(
                 $"Unsupported type kind: {Kind}")
         };
@@ -110,29 +136,123 @@ public sealed record TinyTypeDeclaration(
         return accessibility + modifiers + kind;
     }
 
+    public string ToCSharpDeclarationPrefix()
+    {
+        if (!IsValidCombination())
+        {
+            throw new InvalidOperationException(
+                "The Tiny.CSharp type declaration contains an invalid modifier/kind combination.");
+        }
+
+        var parts = new List<string>
+        {
+            Accessibility switch
+            {
+                TinyAccessibility.Public => "public",
+                TinyAccessibility.Internal => "internal",
+                _ => throw new InvalidOperationException(
+                    $"Unsupported accessibility: {Accessibility}")
+            }
+        };
+
+        if (IsAbstract)
+        {
+            parts.Add("abstract");
+        }
+        else if (IsSealed)
+        {
+            parts.Add("sealed");
+        }
+        else if (IsStatic)
+        {
+            parts.Add("static");
+        }
+
+        if (IsPartial)
+        {
+            parts.Add("partial");
+        }
+
+        parts.Add(Kind switch
+        {
+            TinyTypeKind.Class => "class",
+            TinyTypeKind.Record => "record",
+            _ => throw new InvalidOperationException(
+                $"Unsupported type kind: {Kind}")
+        });
+
+        return string.Join(' ', parts);
+    }
+
+    public bool IsValidCombination()
+    {
+        var primaryModifierCount =
+            (IsAbstract ? 1 : 0) +
+            (IsSealed ? 1 : 0) +
+            (IsStatic ? 1 : 0);
+
+        if (primaryModifierCount > 1)
+        {
+            return false;
+        }
+
+        return Kind switch
+        {
+            TinyTypeKind.Class => true,
+            TinyTypeKind.Record => !IsStatic,
+            _ => false
+        };
+    }
+
+    private static bool TryParseKind(
+        char token,
+        out TinyTypeKind kind)
+    {
+        switch (token)
+        {
+            case 'c':
+                kind = TinyTypeKind.Class;
+                return true;
+            case 'r':
+                kind = TinyTypeKind.Record;
+                return true;
+            default:
+                kind = TinyTypeKind.Class;
+                return false;
+        }
+    }
+
     private static bool TryParseModifiers(
         string token,
         out bool isAbstract,
         out bool isSealed,
+        out bool isStatic,
         out bool isPartial)
     {
         isAbstract = false;
         isSealed = false;
+        isStatic = false;
         isPartial = false;
 
         var position = 0;
 
-        if (position < token.Length &&
-            token[position] == 'a')
+        if (position < token.Length)
         {
-            isAbstract = true;
-            position++;
-        }
-        else if (position < token.Length &&
-                 token[position] == 's')
-        {
-            isSealed = true;
-            position++;
+            switch (token[position])
+            {
+                case 'a':
+                    isAbstract = true;
+                    position++;
+                    break;
+                case 's':
+                    isSealed = true;
+                    position++;
+                    break;
+                case 't':
+                    isStatic = true;
+                    position++;
+                    break;
+            }
         }
 
         if (position < token.Length &&
