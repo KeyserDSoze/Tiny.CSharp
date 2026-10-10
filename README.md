@@ -46,17 +46,33 @@ The current profile assigns:
 |---|---:|---|
 | accessibility | `p` | `public` |
 | accessibility | `i` | `internal` |
-| modifier | `s` | `sealed` |
+| primary modifier | `a` | `abstract` |
+| primary modifier | `s` | `sealed` |
+| primary modifier | `t` | `static` |
+| composition modifier | `p` | `partial` |
 | kind | `c` | `class` |
+| kind | `r` | `record` |
 
-That makes the currently supported declarations:
+Modifier order is canonical: at most one primary modifier (`a`, `s`, or `t`)
+comes first, then optional `p` for `partial`, then the kind.
+
+Examples:
 
 | Tiny.CSharp | C# |
 |---|---|
 | `pc` | `public class` |
-| `psc` | `public sealed class` |
+| `pac` | `public abstract class` |
+| `pspc` | `public sealed partial class` |
+| `ptc` | `public static class` |
+| `ptpc` | `public static partial class` |
+| `pr` | `public record` |
+| `par` | `public abstract record` |
+| `pspr` | `public sealed partial record` |
 | `ic` | `internal class` |
-| `isc` | `internal sealed class` |
+| `ir` | `internal record` |
+
+`t` is used for `static` because `s` is already the canonical code for
+`sealed`. Static records are invalid in the current profile.
 
 For example:
 
@@ -78,6 +94,13 @@ internal sealed class Match
 The same composition rule is intended to scale to additional accessibility,
 modifier, and type-kind codes. New codes are not considered part of the language
 until they are documented and implemented.
+
+Body-only record classes use exactly the same supported property grammar as classes.
+Positional records and record structs are not supported yet.
+
+Inside a `static class`, Tiny.CSharp properties are implicitly emitted as
+`public static`; mode `1` (`init`) is rejected because C# does not permit
+init accessors on static properties.
 
 ### Properties
 
@@ -289,7 +312,8 @@ currently provides. Today the project already has:
   and framework assemblies;
 - deterministic `TCS2001` ambiguity selection and `TCS2002` unresolved warnings;
 - automatic using generation for resolved cross-namespace types;
-- compact public/internal class declarations with optional `sealed`;
+- compact public/internal class and record declarations with canonical
+  `abstract`, `sealed`, `static`, and `partial` modifiers;
 - a shared canonical `TinyDocument` model and centralized type aliases;
 - a Roslyn-based C# -> Tiny.CSharp decompiler for the supported subset;
 - reusable multi-file Roslyn semantic compilation and symbol resolution;
