@@ -50,7 +50,7 @@ internal sealed class Match
         string expectedToken)
     {
         var propertyModifiers = declaration.Contains(
-            "static class",
+            "static",
             StringComparison.Ordinal)
             ? "public static"
             : "public";
