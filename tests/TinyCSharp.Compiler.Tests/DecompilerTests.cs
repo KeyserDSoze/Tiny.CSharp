@@ -43,14 +43,22 @@ internal sealed class Match
     [InlineData("public partial abstract class", "papc")]
     [InlineData("public sealed partial class", "pspc")]
     [InlineData("internal partial abstract class", "iapc")]
+    [InlineData("public static class", "ptc")]
+    [InlineData("public static partial class", "ptpc")]
     public void Decompile_ClassModifiers_AreCanonicalized(
         string declaration,
         string expectedToken)
     {
+        var propertyModifiers = declaration.Contains(
+            "static class",
+            StringComparison.Ordinal)
+            ? "public static"
+            : "public";
+
         var source = $"""
 {{declaration}} Model
 {
-    public int Value { get; set; }
+    {{propertyModifiers}} int Value { get; set; }
 }
 """;
 
