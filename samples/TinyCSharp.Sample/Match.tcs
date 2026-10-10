@@ -1,1 +1,1 @@
-psc Match => Id,Name,AnotherNumber:i,Number:i|1,Code:i|2
+isc Match => Id,Name,AnotherNumber:i,Number:i|1,Code:i|2

@@ -2,23 +2,39 @@
 <Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <PropertyGroup>
     <TinyCSharpEnabled Condition="'$(TinyCSharpEnabled)' == ''">true</TinyCSharpEnabled>
+    <TinyCSharpCompilerProject>$(MSBuildThisFileDirectory)../src/TinyCSharp.Compiler/TinyCSharp.Compiler.csproj</TinyCSharpCompilerProject>
+    <TinyCSharpCompilerDll>$(MSBuildThisFileDirectory)../src/TinyCSharp.Compiler/bin/$(Configuration)/net10.0/TinyCSharp.Compiler.dll</TinyCSharpCompilerDll>
   </PropertyGroup>
 
   <ItemGroup Condition="'$(TinyCSharpEnabled)' == 'true'">
     <TinyCSharpSource Include="**/*.tcs" Exclude="bin/**;obj/**" />
   </ItemGroup>
 
-  <Target Name="TinyCSharpCompile" BeforeTargets="CoreCompile" Condition="'$(TinyCSharpEnabled)' == 'true'">
-    <Exec Command="dotnet run --project &quot;$(MSBuildThisFileDirectory)..\src\TinyCSharp.Compiler\TinyCSharp.Compiler.csproj&quot; -- compile &quot;$(MSBuildProjectFullPath)&quot;" />
+  <ItemGroup Condition="'$(TinyCSharpEnabled)' == 'true' and '$(MSBuildProjectName)' != 'TinyCSharp.Compiler'">
+    <ProjectReference Include="$(TinyCSharpCompilerProject)"
+                      ReferenceOutputAssembly="false"
+                      PrivateAssets="all" />
+  </ItemGroup>
+
+  <Target Name="TinyCSharpCompile"
+          BeforeTargets="CoreCompile"
+          Condition="'$(TinyCSharpEnabled)' == 'true' and '@(TinyCSharpSource)' != ''">
+    <Error Condition="!Exists('$(TinyCSharpCompilerDll)')"
+           Text="Tiny.CSharp compiler was not built at '$(TinyCSharpCompilerDll)'." />
+    <Exec Command="dotnet &quot;$(TinyCSharpCompilerDll)&quot; compile &quot;$(MSBuildProjectFullPath)&quot;" />
   </Target>
 
-  <Target Name="RemoveOwnedGeneratedFiles" BeforeTargets="CoreCompile" Condition="'$(TinyCSharpEnabled)' == 'true'">
+  <Target Name="RemoveOwnedGeneratedFiles"
+          BeforeTargets="CoreCompile"
+          Condition="'$(TinyCSharpEnabled)' == 'true' and '@(TinyCSharpSource)' != ''">
     <ItemGroup>
       <Compile Remove="@(TinyCSharpSource->'%(RootDir)%(Directory)%(Filename).cs')" />
     </ItemGroup>
   </Target>
 
-  <Target Name="IncludeGeneratedCsFiles" AfterTargets="TinyCSharpCompile" Condition="'$(TinyCSharpEnabled)' == 'true'">
+  <Target Name="IncludeGeneratedCsFiles"
+          AfterTargets="TinyCSharpCompile"
+          Condition="'$(TinyCSharpEnabled)' == 'true' and '@(TinyCSharpSource)' != ''">
     <ItemGroup>
       <Compile Include="@(TinyCSharpSource->'%(RootDir)%(Directory)%(Filename).cs')" />
     </ItemGroup>

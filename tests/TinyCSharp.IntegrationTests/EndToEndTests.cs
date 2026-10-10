@@ -50,6 +50,133 @@ public sealed class EndToEndTests
         }
     }
 
+    [Fact]
+    public async Task Resolves_Type_From_Another_Tiny_File_Then_Builds_Successfully()
+    {
+        var root = Path.Combine(
+            Path.GetTempPath(),
+            "tinycs-cross-file-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(Path.Combine(root, "Contracts"));
+        Directory.CreateDirectory(Path.Combine(root, "Models"));
+
+        try
+        {
+            var projectPath = Path.Combine(root, "Tiny.CrossFile.csproj");
+            await File.WriteAllTextAsync(projectPath, """
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>Example</RootNamespace>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+</Project>
+""");
+
+            await File.WriteAllTextAsync(
+                Path.Combine(root, "Contracts", "Team.tcs"),
+                "pc Team => Id");
+            await File.WriteAllTextAsync(
+                Path.Combine(root, "Models", "Match.tcs"),
+                "psc Match => HomeTeam:Team");
+
+            var compiler = new TinyProjectCompiler();
+            var result = await compiler.CompileAsync(projectPath);
+
+            Assert.True(result.Success);
+
+            var matchSource = await File.ReadAllTextAsync(
+                Path.Combine(root, "Models", "Match.cs"));
+            Assert.Contains("using Example.Contracts;", matchSource);
+            Assert.Contains(
+                "public Team HomeTeam { get; set; }",
+                matchSource);
+
+            var build = await RunDotnetAsync(
+                $"build \"{projectPath}\"",
+                root);
+
+            Assert.True(
+                build.ExitCode == 0,
+                $"build failed\nSTDOUT:\n{build.StandardOutput}\nSTDERR:\n{build.StandardError}");
+            Assert.Contains("Build succeeded", build.StandardOutput);
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task Record_And_Static_Class_Generate_And_Build_Successfully()
+    {
+        var root = Path.Combine(
+            Path.GetTempPath(),
+            "tinycs-language-kinds-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+
+        try
+        {
+            var projectPath = Path.Combine(root, "Tiny.LanguageKinds.csproj");
+            await File.WriteAllTextAsync(projectPath, """
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>Example</RootNamespace>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+</Project>
+""");
+
+            await File.WriteAllTextAsync(
+                Path.Combine(root, "Settings.tcs"),
+                "ptc Settings => Name,Count:i|2");
+
+            await File.WriteAllTextAsync(
+                Path.Combine(root, "User.tcs"),
+                "pr User => Name,Age:i|1");
+
+            var compiler = new TinyProjectCompiler();
+            var result = await compiler.CompileAsync(projectPath);
+
+            Assert.True(result.Success);
+
+            var settings = await File.ReadAllTextAsync(
+                Path.Combine(root, "Settings.cs"));
+            Assert.Contains("public static class Settings", settings);
+            Assert.Contains(
+                "public static int Count { get; private set; }",
+                settings);
+
+            var user = await File.ReadAllTextAsync(
+                Path.Combine(root, "User.cs"));
+            Assert.Contains("public record User", user);
+            Assert.Contains(
+                "public int Age { get; init; }",
+                user);
+
+            var build = await RunDotnetAsync(
+                $"build \"{projectPath}\"",
+                root);
+
+            Assert.True(
+                build.ExitCode == 0,
+                $"build failed\nSTDOUT:\n{build.StandardOutput}\nSTDERR:\n{build.StandardError}");
+            Assert.Contains("Build succeeded", build.StandardOutput);
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
     private static async Task<(int ExitCode, string StandardOutput, string StandardError)> RunDotnetAsync(string arguments, string workingDirectory)
     {
         var startInfo = new ProcessStartInfo
