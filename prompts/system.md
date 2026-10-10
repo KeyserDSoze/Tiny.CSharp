@@ -65,44 +65,65 @@ i = internal
 Current modifier codes:
 
 ```text
+a = abstract
 s = sealed
+t = static
+p = partial
 ```
 
 Current type-kind codes:
 
 ```text
 c = class
+r = record
 ```
 
-Therefore the complete currently supported declaration-token set is:
+Canonical modifier order is:
 
 ```text
-pc  = public class
-psc = public sealed class
-ic  = internal class
-isc = internal sealed class
+[one of a|s|t][optional p]
 ```
 
-Examples:
+At most one of `abstract`, `sealed`, and `static` may appear. `partial`
+comes after that primary modifier. Static records are not supported.
 
-```tinycs
-pc User => Id
-psc Match => Id,Name
-ic CacheEntry => Key,Value
-isc InternalModel => Id
+Canonical examples:
+
+```text
+pc   = public class
+pac  = public abstract class
+psc  = public sealed class
+ppc  = public partial class
+papc = public abstract partial class
+ptc  = public static class
+ptpc = public static partial class
+
+pr   = public record
+par  = public abstract record
+psr  = public sealed record
+ppr  = public partial record
+pspr = public sealed partial record
 ```
+
+The same forms may use `i` for internal accessibility.
 
 Do not emit other modifier or type-kind letters until this contract defines them.
 
-## Class/property syntax
+## Type/property syntax
 
-A class is written:
+A supported class or body-only record is written:
 
 ```text
 <declaration-token> <ClassName> => <PropertyList>
 ```
 
 Properties are comma-separated.
+
+For a static class, every Tiny.CSharp property is implicitly `public static` in
+generated C#. Accessor mode `1` (`init`) is invalid in a static class. Modes
+`0` and `2` remain valid.
+
+Positional records and record structs are not representable by this profile.
 
 Each property uses:
 
@@ -202,9 +223,11 @@ The generator adds `using System;` when required for `DateTime` or `Guid`.
 When converting supported C# to Tiny.CSharp:
 
 - use `p` for public and `i` for internal;
-- include `s` only when the class is sealed;
+- use `a`, `s`, or `t` only for abstract, sealed, or static respectively;
+- use modifier `p` only for partial and place it after the primary modifier;
 - end a class declaration token with `c`;
-- preserve the canonical order accessibility -> modifiers -> kind;
+- end a body-only record declaration token with `r`;
+- preserve the canonical order accessibility -> primary modifier -> partial -> kind;
 - omit `:s` because string is the default property type;
 - omit `|0` because mode 0 is the default;
 - use primitive aliases recursively whenever an exact alias exists;
@@ -218,9 +241,13 @@ Canonical examples:
 
 ```text
 public sealed class -> psc
+public abstract partial class -> papc
+public static class -> ptc
 internal sealed class -> isc
 public class -> pc
 internal class -> ic
+public record -> pr
+public sealed partial record -> pspr
 public string Name { get; set; } = string.Empty; -> Name
 public int Age { get; set; } -> Age:i
 public Guid Id { get; init; } -> Id:g|1
