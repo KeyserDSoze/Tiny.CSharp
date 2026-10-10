@@ -20,6 +20,13 @@ public sealed class CompilerTests
     [InlineData("papc", "public abstract partial class")]
     [InlineData("pspc", "public sealed partial class")]
     [InlineData("iapc", "internal abstract partial class")]
+    [InlineData("ptc", "public static class")]
+    [InlineData("ptpc", "public static partial class")]
+    [InlineData("pr", "public record")]
+    [InlineData("par", "public abstract record")]
+    [InlineData("psr", "public sealed record")]
+    [InlineData("ppr", "public partial record")]
+    [InlineData("papr", "public abstract partial record")]
     public void Parse_CompactTypeDeclaration_IsCanonical(string token, string expectedDeclaration)
     {
         var parser = new TinyParser();
@@ -38,6 +45,9 @@ public sealed class CompilerTests
     [InlineData("ppac")]
     [InlineData("psac")]
     [InlineData("paapc")]
+    [InlineData("ptr")]
+    [InlineData("ptpr")]
+    [InlineData("pstr")]
     public void Parse_NonCanonicalClassModifiers_AreRejected(
         string token)
     {
