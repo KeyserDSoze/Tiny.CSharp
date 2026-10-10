@@ -412,6 +412,15 @@ public sealed class CSharpDecompiler
             return false;
         }
 
+        if (containingTypeIsStatic && mode == 1)
+        {
+            AddUnsupported(
+                diagnostics,
+                declaration,
+                "Init accessors are not valid on static properties.");
+            return false;
+        }
+
         if (!ValidateInitializer(declaration, type, mode, diagnostics))
         {
             return false;
