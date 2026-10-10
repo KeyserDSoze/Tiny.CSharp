@@ -61,6 +61,46 @@ public sealed class CompilerTests
     }
 
     [Fact]
+    public void Generate_StaticClass_MakesSupportedPropertiesStatic()
+    {
+        var tree = new TinyParser().Parse(
+            "ptc Settings => Name,Count:i|1");
+
+        Assert.True(tree.IsValid);
+
+        var output = new CSharpGenerator().Generate(tree);
+
+        Assert.Contains("public static class Settings", output);
+        Assert.Contains(
+            "public static string Name { get; set; } = string.Empty;",
+            output);
+        Assert.Contains(
+            "public static int Count { get; init; }",
+            output);
+    }
+
+    [Fact]
+    public void Generate_Record_UsesRecordDeclaration()
+    {
+        var tree = new TinyParser().Parse(
+            "pspr User => Name,Age:i|1");
+
+        Assert.True(tree.IsValid);
+
+        var output = new CSharpGenerator().Generate(tree);
+
+        Assert.Contains(
+            "public sealed partial record User",
+            output);
+        Assert.Contains(
+            "public string Name { get; set; } = string.Empty;",
+            output);
+        Assert.Contains(
+            "public int Age { get; init; }",
+            output);
+    }
+
+    [Fact]
     public void Parse_PscDeclaration_WithAliasesAndModes()
     {
         var parser = new TinyParser();
