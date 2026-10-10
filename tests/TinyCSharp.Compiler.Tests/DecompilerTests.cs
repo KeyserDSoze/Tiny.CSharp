@@ -55,12 +55,7 @@ internal sealed class Match
             ? "public static"
             : "public";
 
-        var source = $"""
-{{declaration}} Model
-{
-    {{propertyModifiers}} int Value { get; set; }
-}
-""";
+        var source = declaration + " Model\\n{\\n    " + propertyModifiers + " int Value { get; set; }\\n}\\n";
 
         var result = new CSharpDecompiler().Decompile(source);
 
@@ -86,12 +81,7 @@ internal sealed class Match
         string declaration,
         string expectedToken)
     {
-        var source = $"""
-{{declaration}} Model
-{
-    public int Value { get; set; }
-}
-""";
+        var source = declaration + " Model\\n{\\n    public int Value { get; set; }\\n}\\n";
 
         var result = new CSharpDecompiler().Decompile(source);
 
