@@ -49,43 +49,20 @@ public sealed class CSharpGenerator
             sb.AppendLine();
         }
         
-        // Add class declaration
-        var accessibility = syntaxTree.TypeDeclaration.Accessibility switch
-        {
-            TinyAccessibility.Public => "public",
-            TinyAccessibility.Internal => "internal",
-            _ => throw new InvalidOperationException(
-                $"Unsupported accessibility: {syntaxTree.TypeDeclaration.Accessibility}")
-        };
-
-        var modifiers = new List<string>();
-
-        if (syntaxTree.TypeDeclaration.IsAbstract)
-        {
-            modifiers.Add("abstract");
-        }
-        else if (syntaxTree.TypeDeclaration.IsSealed)
-        {
-            modifiers.Add("sealed");
-        }
-
-        if (syntaxTree.TypeDeclaration.IsPartial)
-        {
-            modifiers.Add("partial");
-        }
-
-        var modifierText = modifiers.Count == 0
-            ? string.Empty
-            : " " + string.Join(' ', modifiers);
-
+        // Add type declaration
         sb.AppendLine(
-            $"{accessibility}{modifierText} class {syntaxTree.ClassName}");
+            $"{syntaxTree.TypeDeclaration.ToCSharpDeclarationPrefix()} {syntaxTree.ClassName}");
         sb.AppendLine("{");
         
         // Add properties
         foreach (var property in syntaxTree.Properties)
         {
-            var declaration = $"    public {property.Type.ToCSharp()} {property.Name} {{ get; {GetSetter(property.Mode)} }}";
+            var staticModifier =
+                syntaxTree.TypeDeclaration.IsStatic
+                    ? " static"
+                    : string.Empty;
+            var declaration =
+                $"    public{staticModifier} {property.Type.ToCSharp()} {property.Name} {{ get; {GetSetter(property.Mode)} }}";
             if (property.Type.IsDefaultString && property.Mode == 0)
             {
                 declaration += " = string.Empty;";
