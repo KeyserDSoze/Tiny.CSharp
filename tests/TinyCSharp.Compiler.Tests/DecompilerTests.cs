@@ -75,6 +75,73 @@ internal sealed class Match
             tiny);
     }
 
+    [Theory]
+    [InlineData("public record", "pr")]
+    [InlineData("public record class", "pr")]
+    [InlineData("public abstract record", "par")]
+    [InlineData("public sealed record", "psr")]
+    [InlineData("public partial record", "ppr")]
+    [InlineData("internal sealed partial record", "ispr")]
+    public void Decompile_RecordDeclarations_AreCanonicalized(
+        string declaration,
+        string expectedToken)
+    {
+        var source = $"""
+{{declaration}} Model
+{
+    public int Value { get; set; }
+}
+""";
+
+        var result = new CSharpDecompiler().Decompile(source);
+
+        Assert.True(result.Success);
+        Assert.Equal(
+            expectedToken,
+            result.Document!.TypeDeclaration.ToToken());
+
+        var tiny = new TinyFormatter().Format(result.Document);
+        Assert.Equal(
+            $"{expectedToken} Model => Value:i\n",
+            tiny);
+    }
+
+    [Fact]
+    public void Decompile_PositionalRecord_IsRejected()
+    {
+        const string source =
+            "public record User(string Name);";
+
+        var result = new CSharpDecompiler().Decompile(source);
+
+        Assert.False(result.Success);
+        Assert.Contains(
+            result.Diagnostics,
+            diagnostic =>
+                diagnostic.Code == "TCS6002" &&
+                diagnostic.Message.Contains(
+                    "Positional records",
+                    StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Decompile_RecordStruct_IsRejected()
+    {
+        const string source =
+            "public record struct Point(int X, int Y);";
+
+        var result = new CSharpDecompiler().Decompile(source);
+
+        Assert.False(result.Success);
+        Assert.Contains(
+            result.Diagnostics,
+            diagnostic =>
+                diagnostic.Code == "TCS6002" &&
+                diagnostic.Message.Contains(
+                    "Record structs",
+                    StringComparison.Ordinal));
+    }
+
     [Fact]
     public void Decompile_ClassWithoutAccessibility_UsesInternalCanonicalToken()
     {
