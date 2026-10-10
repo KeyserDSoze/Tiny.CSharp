@@ -85,23 +85,51 @@ public sealed class CSharpDecompiler
             return new TinyDecompilationResult(null, diagnostics);
         }
 
-        if (members.Count != 1 || members[0] is not ClassDeclarationSyntax classDeclaration)
+        if (members.Count != 1)
         {
             AddUnsupported(
                 diagnostics,
                 root,
-                "The current Tiny.CSharp profile requires exactly one top-level class.");
+                "The current Tiny.CSharp profile requires exactly one top-level supported type.");
             return new TinyDecompilationResult(null, diagnostics);
         }
 
         var allTypeNamesResolved = true;
+        var declarationRead = members[0] switch
+        {
+            ClassDeclarationSyntax classDeclaration =>
+                TryReadTypeDeclaration(
+                    classDeclaration,
+                    TinyTypeKind.Class,
+                    semanticModel,
+                    document,
+                    diagnostics,
+                    ref allTypeNamesResolved),
+            RecordDeclarationSyntax recordDeclaration
+                when recordDeclaration.ClassOrStructKeyword.IsKind(SyntaxKind.StructKeyword) =>
+                RejectRecordStruct(
+                    recordDeclaration,
+                    diagnostics),
+            RecordDeclarationSyntax recordDeclaration
+                when recordDeclaration.ParameterList is not null =>
+                RejectPositionalRecord(
+                    recordDeclaration,
+                    diagnostics),
+            RecordDeclarationSyntax recordDeclaration =>
+                TryReadTypeDeclaration(
+                    recordDeclaration,
+                    TinyTypeKind.Record,
+                    semanticModel,
+                    document,
+                    diagnostics,
+                    ref allTypeNamesResolved),
+            _ =>
+                RejectUnsupportedTopLevelType(
+                    members[0],
+                    diagnostics)
+        };
 
-        if (!TryReadClass(
-                classDeclaration,
-                semanticModel,
-                document,
-                diagnostics,
-                ref allTypeNamesResolved))
+        if (!declarationRead)
         {
             return new TinyDecompilationResult(null, diagnostics);
         }
@@ -139,32 +167,36 @@ public sealed class CSharpDecompiler
         return true;
     }
 
-    private static bool TryReadClass(
-        ClassDeclarationSyntax classDeclaration,
+    private static bool TryReadTypeDeclaration(
+        TypeDeclarationSyntax declaration,
+        TinyTypeKind kind,
         SemanticModel semanticModel,
         TinyDocument document,
         List<TinyDecompilationDiagnostic> diagnostics,
         ref bool allTypeNamesResolved)
     {
-        if (classDeclaration.AttributeLists.Count > 0 ||
-            classDeclaration.TypeParameterList is not null ||
-            classDeclaration.BaseList is not null ||
-            classDeclaration.ConstraintClauses.Count > 0)
+        if (declaration.AttributeLists.Count > 0 ||
+            declaration.TypeParameterList is not null ||
+            declaration.BaseList is not null ||
+            declaration.ConstraintClauses.Count > 0)
         {
             AddUnsupported(
                 diagnostics,
-                classDeclaration,
+                declaration,
                 "Attributes, generic parameters, base types, interfaces, and generic constraints are not supported yet.");
             return false;
         }
 
-        var modifiers = classDeclaration.Modifiers;
+        var modifiers = declaration.Modifiers;
         var isPublic = modifiers.Any(SyntaxKind.PublicKeyword);
         var isInternal = modifiers.Any(SyntaxKind.InternalKeyword);
 
         if (isPublic && isInternal)
         {
-            AddUnsupported(diagnostics, classDeclaration, "A class cannot be both public and internal.");
+            AddUnsupported(
+                diagnostics,
+                declaration,
+                "A type cannot be both public and internal.");
             return false;
         }
 
@@ -174,37 +206,40 @@ public sealed class CSharpDecompiler
                 !modifier.IsKind(SyntaxKind.InternalKeyword) &&
                 !modifier.IsKind(SyntaxKind.AbstractKeyword) &&
                 !modifier.IsKind(SyntaxKind.SealedKeyword) &&
+                !modifier.IsKind(SyntaxKind.StaticKeyword) &&
                 !modifier.IsKind(SyntaxKind.PartialKeyword))
             {
                 AddUnsupported(
                     diagnostics,
                     modifier,
-                    $"Class modifier '{modifier.Text}' is not supported by the current Tiny.CSharp profile.");
+                    $"Type modifier '{modifier.Text}' is not supported by the current Tiny.CSharp profile.");
                 return false;
             }
         }
 
-        var isAbstract = modifiers.Any(SyntaxKind.AbstractKeyword);
-        var isSealed = modifiers.Any(SyntaxKind.SealedKeyword);
+        var typeDeclaration = new TinyTypeDeclaration(
+            isPublic ? TinyAccessibility.Public : TinyAccessibility.Internal,
+            modifiers.Any(SyntaxKind.AbstractKeyword),
+            modifiers.Any(SyntaxKind.SealedKeyword),
+            modifiers.Any(SyntaxKind.PartialKeyword),
+            kind)
+        {
+            IsStatic = modifiers.Any(SyntaxKind.StaticKeyword)
+        };
 
-        if (isAbstract && isSealed)
+        if (!typeDeclaration.IsValidCombination())
         {
             AddUnsupported(
                 diagnostics,
-                classDeclaration,
-                "A class cannot be both abstract and sealed in the current Tiny.CSharp profile.");
+                declaration,
+                $"Modifier combination on '{declaration.Identifier.ValueText}' is not representable by the current Tiny.CSharp declaration grammar.");
             return false;
         }
 
-        document.TypeDeclaration = new TinyTypeDeclaration(
-            isPublic ? TinyAccessibility.Public : TinyAccessibility.Internal,
-            isAbstract,
-            isSealed,
-            modifiers.Any(SyntaxKind.PartialKeyword),
-            TinyTypeKind.Class);
-        document.ClassName = classDeclaration.Identifier.ValueText;
+        document.TypeDeclaration = typeDeclaration;
+        document.ClassName = declaration.Identifier.ValueText;
 
-        foreach (var member in classDeclaration.Members)
+        foreach (var member in declaration.Members)
         {
             if (member is not PropertyDeclarationSyntax propertyDeclaration)
             {
@@ -218,6 +253,7 @@ public sealed class CSharpDecompiler
             if (!TryReadProperty(
                     propertyDeclaration,
                     semanticModel,
+                    typeDeclaration.IsStatic,
                     out var property,
                     diagnostics,
                     out var propertyTypeResolved))
@@ -232,9 +268,43 @@ public sealed class CSharpDecompiler
         return true;
     }
 
+    private static bool RejectRecordStruct(
+        RecordDeclarationSyntax declaration,
+        List<TinyDecompilationDiagnostic> diagnostics)
+    {
+        AddUnsupported(
+            diagnostics,
+            declaration,
+            "Record structs require a dedicated Tiny.CSharp value-type member contract and are not supported yet.");
+        return false;
+    }
+
+    private static bool RejectPositionalRecord(
+        RecordDeclarationSyntax declaration,
+        List<TinyDecompilationDiagnostic> diagnostics)
+    {
+        AddUnsupported(
+            diagnostics,
+            declaration,
+            "Positional records are not supported yet; use a body-only record with supported properties.");
+        return false;
+    }
+
+    private static bool RejectUnsupportedTopLevelType(
+        MemberDeclarationSyntax declaration,
+        List<TinyDecompilationDiagnostic> diagnostics)
+    {
+        AddUnsupported(
+            diagnostics,
+            declaration,
+            $"Top-level type kind '{declaration.Kind()}' is not supported by the current Tiny.CSharp profile.");
+        return false;
+    }
+
     private static bool TryReadProperty(
         PropertyDeclarationSyntax declaration,
         SemanticModel semanticModel,
+        bool containingTypeIsStatic,
         out TinyProperty property,
         List<TinyDecompilationDiagnostic> diagnostics,
         out bool typeNamesResolved)
@@ -253,13 +323,27 @@ public sealed class CSharpDecompiler
             return false;
         }
 
-        if (declaration.Modifiers.Count != 1 ||
-            !declaration.Modifiers[0].IsKind(SyntaxKind.PublicKeyword))
+        var hasPublic = declaration.Modifiers.Any(
+            SyntaxKind.PublicKeyword);
+        var hasStatic = declaration.Modifiers.Any(
+            SyntaxKind.StaticKeyword);
+        var onlySupportedPropertyModifiers = declaration.Modifiers.All(
+            modifier =>
+                modifier.IsKind(SyntaxKind.PublicKeyword) ||
+                modifier.IsKind(SyntaxKind.StaticKeyword));
+
+        if (!hasPublic ||
+            hasStatic != containingTypeIsStatic ||
+            !onlySupportedPropertyModifiers ||
+            declaration.Modifiers.Count !=
+                (containingTypeIsStatic ? 2 : 1))
         {
             AddUnsupported(
                 diagnostics,
                 declaration,
-                "The current Tiny.CSharp property profile supports public instance properties only.");
+                containingTypeIsStatic
+                    ? "Properties in a Tiny.CSharp static class must be public static auto-properties."
+                    : "The current Tiny.CSharp property profile supports public instance properties only.");
             return false;
         }
 
