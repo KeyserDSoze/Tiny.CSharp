@@ -11,6 +11,7 @@ public static class TinyDiagnosticCodes
     public const string InvalidAccessorMode = "TCS1007";
     public const string InvalidTypeSyntax = "TCS1008";
     public const string DuplicateProperty = "TCS1009";
+    public const string InvalidPropertyForTypeDeclaration = "TCS1010";
 
     public const string AmbiguousType = "TCS2001";
     public const string UnresolvedType = "TCS2002";
