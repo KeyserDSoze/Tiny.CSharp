@@ -315,26 +315,8 @@ public sealed class CSharpProjectDecompiler
         }
 
         builder.Append(
-                document.TypeDeclaration.Accessibility ==
-                TinyAccessibility.Public
-                    ? "public"
-                    : "internal");
-
-        if (document.TypeDeclaration.IsAbstract)
-        {
-            builder.Append(" abstract");
-        }
-        else if (document.TypeDeclaration.IsSealed)
-        {
-            builder.Append(" sealed");
-        }
-
-        if (document.TypeDeclaration.IsPartial)
-        {
-            builder.Append(" partial");
-        }
-
-        builder.Append(" class ")
+                document.TypeDeclaration.ToCSharpDeclarationPrefix())
+            .Append(' ')
             .Append(document.ClassName)
             .AppendLine(" { }");
 
