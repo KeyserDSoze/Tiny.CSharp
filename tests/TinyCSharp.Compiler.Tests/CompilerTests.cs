@@ -64,7 +64,7 @@ public sealed class CompilerTests
     public void Generate_StaticClass_MakesSupportedPropertiesStatic()
     {
         var tree = new TinyParser().Parse(
-            "ptc Settings => Name,Count:i|1");
+            "ptc Settings => Name,Count:i|2");
 
         Assert.True(tree.IsValid);
 
@@ -75,8 +75,20 @@ public sealed class CompilerTests
             "public static string Name { get; set; } = string.Empty;",
             output);
         Assert.Contains(
-            "public static int Count { get; init; }",
+            "public static int Count { get; private set; }",
             output);
+    }
+
+    [Fact]
+    public void Parse_StaticClassInitProperty_ReportsTcs1010()
+    {
+        var tree = new TinyParser().Parse(
+            "ptc Settings => Count:i|1",
+            "Settings.tcs");
+
+        Assert.False(tree.IsValid);
+        var diagnostic = Assert.Single(tree.Diagnostics);
+        Assert.Equal("TCS1010", diagnostic.Code);
     }
 
     [Fact]
