@@ -126,6 +126,16 @@ public sealed class TinyParser
                 return Invalid(syntaxTree);
             }
 
+            if (syntaxTree.TypeDeclaration.IsStatic &&
+                property.Mode == 1)
+            {
+                AddError(
+                    TinyDiagnosticCodes.InvalidPropertyForTypeDeclaration,
+                    $"Property '{property.Name}' cannot use init mode inside a static class.",
+                    propertyPosition);
+                return Invalid(syntaxTree);
+            }
+
             if (syntaxTree.Properties.Any(existing =>
                     string.Equals(
                         existing.Name,
